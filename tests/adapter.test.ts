@@ -201,11 +201,47 @@ describe('LlamacppAdapter request serialization', () => {
     expect(fakeChat).not.toHaveBeenCalled();
   });
 
-  it('rejects reasoning effort explicitly (issue #4)', async () => {
+  it('rejects an unsupported reasoning effort explicitly', async () => {
     const { adapter, fakeChat } = harness({});
     const { error } = await collect(adapter.stream({ ...baseOptions, reasoningEffort: 'high' as never }));
     expect((error as LlmError).code).toBe('UNSUPPORTED_REASONING_EFFORT');
     expect(fakeChat).not.toHaveBeenCalled();
+  });
+
+  it('translates the default reasoning preset onto the wire (chat-template-kwargs)', async () => {
+    const { adapter, fakeChat } = harness({});
+    await collect(adapter.stream(baseOptions));
+    const wire = fakeChat.mock.calls[0]?.[0] as LlamaCppChatCompletionRequest;
+    expect(wire.chat_template_kwargs).toEqual({ enable_thinking: true, thinking_budget: 4096 });
+  });
+
+  it('honors an explicit per-request reasoning effort of off', async () => {
+    const { adapter, fakeChat } = harness({});
+    await collect(adapter.stream({ ...baseOptions, reasoningEffort: 'off' as never }));
+    const wire = fakeChat.mock.calls[0]?.[0] as LlamaCppChatCompletionRequest;
+    expect(wire.chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it('uses reasoning-fields wire mode when configured', async () => {
+    const { adapter, fakeChat } = harness({ reasoning: { wire: 'reasoning-fields', preset: 'xhigh' } });
+    await collect(adapter.stream(baseOptions));
+    const wire = fakeChat.mock.calls[0]?.[0] as LlamaCppChatCompletionRequest;
+    expect(wire.reasoning_effort).toBe('xhigh');
+    expect(wire.reasoning_budget_tokens).toBe(16384);
+    expect(wire.chat_template_kwargs).toBeUndefined();
+  });
+
+  it('advertises reasoning efforts and default through resolveModel', async () => {
+    const { adapter } = harness({ reasoning: { preset: 'low' } });
+    const info = await adapter.resolveModel('llamacpp-local', 'qwen3');
+    expect(info.reasoning?.efforts.map((e) => e.id)).toEqual(['off', 'low', 'medium', 'xhigh']);
+    expect(info.reasoning?.defaultEffort).toBe('low');
+  });
+
+  it('advertises only off when reasoning is disabled', async () => {
+    const { adapter } = harness({ reasoning: { enabled: false, preset: 'off' } });
+    const info = await adapter.resolveModel('llamacpp-local', 'qwen3');
+    expect(info.reasoning?.efforts.map((e) => e.id)).toEqual(['off']);
   });
 });
 
@@ -285,6 +321,21 @@ describe('LlamacppAdapter stream translation', () => {
         type: 'finish',
         reason: { kind: 'error', failure: { message: 'llama.cpp returned a completed response with no content', code: 'EMPTY_RESPONSE' } },
       },
+    ]);
+  });
+
+  it('drops reasoning blocks when preserveThinking is disabled', async () => {
+    const { adapter } = harness({ reasoning: { expert: { preserveThinking: false } } }, [
+      chunk({ choices: [{ index: 0, delta: { reasoning_content: 'hidden' }, finish_reason: null }] }),
+      contentDelta('visible', 'stop'),
+    ]);
+    const { chunks, error } = await collect(adapter.stream(baseOptions));
+    expect(error).toBeUndefined();
+    expect(chunks).toEqual([
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text: 'visible' },
+      { type: 'block-end', index: 0, block: { type: 'text', text: 'visible' } },
+      { type: 'finish', reason: { kind: 'stop' } },
     ]);
   });
 

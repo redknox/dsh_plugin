@@ -25,6 +25,7 @@ import {
 } from './client.ts';
 import type { LlamaCppChatCompletionChunk, LlamaCppChatCompletionRequest } from './protocol.ts';
 import type { ResolvedAdapterOptions } from './config.ts';
+import { resolveReasoningPolicy, reasoningEfforts } from './reasoning.ts';
 import { serializeRequest } from './serialize.ts';
 import { translate } from './translate.ts';
 
@@ -83,24 +84,29 @@ export class LlamacppAdapter extends LlmAdapter {
   }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const { reasoning } = this.deps.options();
+    const { efforts, defaultEffort } = reasoningEfforts(reasoning);
     return Promise.resolve({
       provider,
       id: model,
       name: model,
       inputModalities: ['text'],
+      reasoning: { efforts, defaultEffort },
     });
   }
 
   /**
-   * Stream one model call. Each call resolves connection facts and the API key
-   * afresh (a changed base URL or key reaches the very next request), builds a
-   * fresh client for the resolved endpoint, and translates the wire stream.
-   * Thrown failures (client `LlmError`s included) are normalized by
-   * `LlmRuntime` into a terminal `finish` chunk.
+   * Stream one model call. Each call resolves connection facts, the API key,
+   * and the reasoning policy afresh (a changed base URL, key, or preset
+   * reaches the very next request), builds a fresh client for the resolved
+   * endpoint, and translates the wire stream. Thrown failures (client
+   * `LlmError`s included) are normalized by `LlmRuntime` into a terminal
+   * `finish` chunk.
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const opts = this.deps.options();
-    const request = serializeRequest(options);
+    const reasoning = resolveReasoningPolicy(options.reasoningEffort, opts.reasoning, options.purpose);
+    const request = serializeRequest(options, reasoning);
     const apiKey = await this.deps.resolveApiKey();
     const auth = apiKey !== undefined
       ? {
@@ -113,6 +119,8 @@ export class LlamacppAdapter extends LlmAdapter {
       streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
       ...(auth !== undefined ? { auth } : {}),
     });
-    yield* translate(client.chat(request, { signal: options.signal }));
+    yield* translate(client.chat(request, { signal: options.signal }), {
+      preserveThinking: reasoning.preserveThinking,
+    });
   }
 }

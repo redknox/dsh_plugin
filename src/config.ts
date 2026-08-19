@@ -18,6 +18,13 @@ import {
   type ResolvedRetryPolicy,
   type RetryPolicyConfig,
 } from '@deepseek-ai/dsh-llm';
+import {
+  validateReasoningConfig,
+  type ReasoningExpertOverride,
+  type ReasoningLevel,
+  type ReasoningPolicyConfig,
+  type ReasoningWireMode,
+} from './reasoning.ts';
 
 /** Cordis plugin short name; also the settings namespace and npm package name. */
 export const PLUGIN_NAME = 'llm-llamacpp';
@@ -33,6 +40,26 @@ export const DEFAULT_MODEL = 'qwen3';
 export const DEFAULT_API_KEY_HEADER = 'authorization';
 /** Default maximum idle interval while a provider stream read is outstanding. */
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
+
+/** Expert/advanced reasoning override surface (see reasoning.ts). */
+const ReasoningExpertSchema = z.object({
+  enabled: z.boolean(),
+  effort: z.string(),
+  budgetTokens: z.number().step(1).min(1),
+  preserveThinking: z.boolean(),
+});
+
+/** Semantic reasoning configuration; wire translation happens in serialize.ts. */
+const ReasoningSchema = z.object({
+  /** Master thinking switch; `false` advertises and allows only `off`. */
+  enabled: z.boolean().default(true),
+  /** Default semantic level when a request names none. */
+  preset: z.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
+  /** Explicit expert override surface; never rewrites the preset table. */
+  expert: ReasoningExpertSchema,
+  /** llama.cpp wire translation mode (version-dependent; documented in serialize.ts). */
+  wire: z.union(['chat-template-kwargs', 'reasoning-fields']).default('chat-template-kwargs'),
+});
 
 /**
  * Plugin entry config. Every field is optional so the plugin loads with
@@ -58,6 +85,8 @@ export const Config = z.object({
   streamIdleTimeoutMs: z.number().min(1).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
   /** Provider-owned request retry policy captured at registration. */
   retryPolicy: RetryPolicySchema,
+  /** Semantic Qwen reasoning controls (presets + expert overrides). */
+  reasoning: ReasoningSchema,
 });
 
 export type ConfigType = {
@@ -75,6 +104,13 @@ export type ConfigType = {
   streamIdleTimeoutMs?: number;
   /** Provider-owned request retry policy captured at registration. */
   retryPolicy?: RetryPolicyConfig;
+  /** Semantic Qwen reasoning controls. */
+  reasoning?: {
+    enabled?: boolean;
+    preset?: ReasoningLevel;
+    expert?: ReasoningExpertOverride;
+    wire?: ReasoningWireMode;
+  };
 };
 
 /** Validated, detached connection facts the adapter reads per operation. */
@@ -87,6 +123,7 @@ export interface ResolvedAdapterOptions {
   readonly apiKeyHeader: string;
   readonly streamIdleTimeoutMs: number;
   readonly retryPolicy: ResolvedRetryPolicy;
+  readonly reasoning: ReasoningPolicyConfig;
 }
 
 /** Reject a base URL that is present but not a usable http(s) endpoint. */
@@ -126,6 +163,14 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     throw new Error('llm-llamacpp: streamIdleTimeoutMs must be a positive finite number');
   }
   const apiKeyEnv = config.apiKeyEnv?.trim();
+  const reasoningRaw = config.reasoning ?? {};
+  const reasoning: ReasoningPolicyConfig = {
+    enabled: reasoningRaw.enabled ?? true,
+    preset: reasoningRaw.preset ?? 'medium',
+    ...(reasoningRaw.expert !== undefined ? { expert: reasoningRaw.expert } : {}),
+    wire: reasoningRaw.wire ?? 'chat-template-kwargs',
+  };
+  validateReasoningConfig(reasoning, 'llm-llamacpp: reasoning');
   return {
     providerName,
     baseURL,
@@ -134,5 +179,6 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     apiKeyHeader,
     streamIdleTimeoutMs,
     retryPolicy: resolveRetryPolicy(config.retryPolicy as ConfigType['retryPolicy'], 'llm-llamacpp: retryPolicy'),
+    reasoning,
   };
 }

@@ -9,12 +9,10 @@ The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** Issues #1 (scaffold + registration), #2 (llama.cpp
-> OpenAI-compatible streaming client), and #3 (`LlmAdapter` message and stream
-> translation: `GenerateOptions` → wire request, wire chunks → `StreamChunk`,
-> explicit rejection of tools/reasoning until #4/#5) are implemented. Tool
-> calling, reasoning presets, adaptive budgets, and reliability land in later
-> issues.
+> **Status.** Issues #1-#4 are implemented: scaffold + registration, the
+> llama.cpp streaming client, `LlmAdapter` message/stream translation, and
+> Qwen reasoning presets (`off`/`low`/`medium`/`xhigh`) with expert overrides.
+> Tool calling (#5), adaptive budgets (#6), and reliability (#7) land next.
 
 ## Requirements
 
@@ -36,6 +34,15 @@ Add an entry to the harness plugin list (e.g. `cordis.yml`):
     # apiKeyEnv: LLAMACPP_API_KEY   # optional; set when a reverse proxy requires a key
     # apiKeyHeader: authorization   # 'authorization' sends 'Bearer <key>', anything else sends the raw key
     # streamIdleTimeoutMs: 300000
+    # reasoning:                    # optional semantic Qwen reasoning controls
+    #   enabled: true               # false advertises and allows only 'off'
+    #   preset: medium              # off | low | medium | xhigh
+    #   wire: chat-template-kwargs  # chat-template-kwargs | reasoning-fields
+    #   expert:                     # explicit expert override surface
+    #     enabled: true
+    #     effort: medium
+    #     budgetTokens: 4096
+    #     preserveThinking: true
     # retryPolicy:                  # optional; omission uses bounded normal defaults
     #   mode: normal
     #   maxRetries: 2
@@ -52,6 +59,30 @@ Configuration is validated at load: an invalid `baseURL` (not an http(s) URL)
 or an empty `model`/`providerName` fails the plugin load clearly. When the
 harness settings service is mounted, the same schema drives an `llm-llamacpp`
 settings section that can override any field without a restart.
+
+## Reasoning (Qwen thinking)
+
+The provider exposes stable semantic levels (`off`, `low`, `medium`, `xhigh`)
+through `resolveModel`/`ctx.llm.resolveModelInfo`, selectable as
+`GenerateOptions.reasoningEffort`. Effort (semantic) and `budgetTokens`
+(runtime thinking budget) are separate concepts; the built-in preset table
+maps each level, and the `reasoning.expert` config overrides individual fields
+without rewriting the table. Per-request effort wins over the configured
+preset; `session-title` calls always disable thinking.
+
+The resolved policy is translated to llama.cpp request fields only in the
+request builder, and the fields are version-dependent:
+
+- `wire: chat-template-kwargs` (default): `chat_template_kwargs = {
+  enable_thinking, thinking_budget }`. Honored by llama.cpp builds shipping
+  the per-request template-kwargs hook for Qwen3 templates (llama.cpp
+  PR #13196) across Qwen3-era versions. `off` sends `enable_thinking: false`.
+- `wire: reasoning-fields`: top-level `reasoning_effort` (including `"none"`)
+  and `reasoning_budget_tokens`. Requires newer llama.cpp builds with native
+  per-request reasoning support (PRs #22336 / #23116 / #26045).
+
+`preserveThinking: false` (expert) consumes thinking deltas without emitting
+`reasoning` blocks to the harness stream.
 
 ## Development
 

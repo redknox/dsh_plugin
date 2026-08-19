@@ -62,10 +62,14 @@ interface OpenBlock {
  * `EMPTY_RESPONSE` error finish. Streamed tool-call deltas are rejected
  * explicitly until issue #5 implements them.
  * @param chunks - parsed wire chunks from the client (already JSON-decoded).
+ * @param options - `preserveThinking: false` consumes reasoning deltas without
+ *   emitting reasoning blocks (the `preserveThinking` expert knob).
  */
 export async function* translate(
   chunks: AsyncIterable<LlamaCppChatCompletionChunk>,
+  options: { preserveThinking?: boolean } = {},
 ): AsyncIterable<StreamChunk> {
+  const preserveThinking = options.preserveThinking ?? true;
   let nextIndex = 0;
   let textBlock: OpenBlock | undefined;
   let reasoningBlock: OpenBlock | undefined;
@@ -78,13 +82,15 @@ export async function* translate(
       const delta = choice.delta;
       const reasoning = delta.reasoning_content;
       if (typeof reasoning === 'string' && reasoning.length > 0) {
-        if (reasoningBlock === undefined) {
-          reasoningBlock = { index: nextIndex++, kind: 'reasoning', text: '' };
-          order.push(reasoningBlock);
-          yield { type: 'block-start', index: reasoningBlock.index, blockType: 'reasoning' };
+        if (preserveThinking) {
+          if (reasoningBlock === undefined) {
+            reasoningBlock = { index: nextIndex++, kind: 'reasoning', text: '' };
+            order.push(reasoningBlock);
+            yield { type: 'block-start', index: reasoningBlock.index, blockType: 'reasoning' };
+          }
+          reasoningBlock.text += reasoning;
+          yield { type: 'reasoning-delta', index: reasoningBlock.index, text: reasoning };
         }
-        reasoningBlock.text += reasoning;
-        yield { type: 'reasoning-delta', index: reasoningBlock.index, text: reasoning };
       }
       const content = delta.content;
       if (typeof content === 'string' && content.length > 0) {
