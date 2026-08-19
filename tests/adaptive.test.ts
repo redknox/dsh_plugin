@@ -114,15 +114,29 @@ describe('resolveReasoningPolicy with adaptive', () => {
   });
 
   it('still lets an explicit per-request effort win', () => {
-    const decision = resolveReasoningPolicy(
+    // 'off' disables thinking entirely, so it would skip the adaptive branch
+    // regardless; a NON-off explicit effort is the regression case.
+    const heavy = context({ messages: 64, toolsAvailable: true });
+    const off = resolveReasoningPolicy(
       ReasoningEffortId('off'),
       { ...baseConfig, preset: 'xhigh' },
       undefined,
-      context({ messages: 64 }),
+      heavy,
     );
-    expect(decision.enabled).toBe(false);
-    expect(decision.budgetTokens).toBeUndefined();
-    expect(decision.reason).toBeUndefined();
+    expect(off.enabled).toBe(false);
+    expect(off.budgetTokens).toBeUndefined();
+    expect(off.reason).toBeUndefined();
+
+    // Explicit 'low' under heavy adaptive context: the low preset budget
+    // (1024) must survive untouched, with no adaptive explanation.
+    const low = resolveReasoningPolicy(
+      ReasoningEffortId('low'),
+      { ...baseConfig, preset: 'xhigh' },
+      undefined,
+      heavy,
+    );
+    expect(low.budgetTokens).toBe(1024);
+    expect(low.reason).toBeUndefined();
   });
 
   it('never lets the adaptive layer override an explicit expert budget', () => {

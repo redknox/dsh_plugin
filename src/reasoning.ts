@@ -360,6 +360,8 @@ export class AdaptiveReasoningPolicy implements ReasoningPolicy {
     const decision = this.base.resolve(input);
     const adaptive = this.config.adaptive;
     if (adaptive?.enabled !== true) return decision;
+    // An explicit per-request effort always wins: no adaptive adjustment.
+    if (input.effort !== undefined) return decision;
     if (!decision.enabled || decision.budgetTokens === undefined) return decision;
     // An explicit expert budget always wins over the adaptive layer.
     if (this.config.expert?.budgetTokens !== undefined) return decision;
