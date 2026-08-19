@@ -128,6 +128,24 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
     }
   });
 
+  it('fails clearly when an apiKeyEnv reference resolves nowhere', async () => {
+    const ctx = await mounted({ apiKeyEnv: 'LLAMACPP_SURELY_UNSET_4E2A' });
+    const chunks: StreamChunk[] = [];
+    for await (const chunk of ctx.llm.stream({
+      provider: PROVIDER,
+      model: 'qwen3',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
+    })) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(1);
+    const finish = chunks[0] as Extract<StreamChunk, { type: 'finish' }>;
+    expect(finish.reason.kind).toBe('error');
+    if (finish.reason.kind === 'error') {
+      expect(finish.reason.failure.code).toBe('MISSING_CREDENTIAL');
+    }
+  });
+
   it('round-trips tool schemas and streamed tool calls through ctx.llm (issue #5)', async () => {
     // First turn: fragmented tool-call frames from a mocked llama.cpp server.
     fetchMock.mockResolvedValueOnce(

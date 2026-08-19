@@ -33,6 +33,8 @@ Add an entry to the harness plugin list (e.g. `cordis.yml`):
     model: qwen3                    # default model id sent to the wire
     providerName: llama.cpp (Local) # name shown in model selectors
     # apiKeyEnv: LLAMACPP_API_KEY   # optional; set when a reverse proxy requires a key
+    #   resolved per request through ctx.credentials (the web Models page can
+    #   store it), falling back to the launching environment
     # apiKeyHeader: authorization   # 'authorization' sends 'Bearer <key>', anything else sends the raw key
     # streamIdleTimeoutMs: 300000
     # requestTimeoutMs: 60000  # optional hard per-attempt timeout, regardless of activity

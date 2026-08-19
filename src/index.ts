@@ -15,6 +15,7 @@
  * @module llm-llamacpp
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { LlmError, assertUsableApiKey } from '@deepseek-ai/dsh-llm';
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
 import { LlamacppAdapter } from './adapter.ts';
@@ -70,9 +71,26 @@ export function apply(ctx: Context, config: ConfigType): void {
   const resolveApiKey = async (): Promise<string | undefined> => {
     const opts = options();
     if (opts.apiKeyEnv === undefined) return undefined;
-    const raw = process.env[opts.apiKeyEnv];
-    if (raw === undefined || raw.length === 0) return undefined;
-    return assertUsableApiKey(raw, PLUGIN_NAME, opts.apiKeyEnv);
+    // Resolve through the DSH credentials seam when mounted (its `env` layer
+    // covers the launching environment and the GUI Models page can store the
+    // key), falling back to a direct process.env read otherwise. A configured
+    // reference that resolves nowhere fails clearly instead of silently
+    // sending an unauthenticated request.
+    const credentials = ctx.get('credentials');
+    if (credentials !== undefined) {
+      const hit = await credentials.resolve(credentialRef(opts.apiKeyEnv));
+      if (hit !== undefined) return assertUsableApiKey(hit.value, PLUGIN_NAME, opts.apiKeyEnv);
+    } else {
+      const ambient = process.env[opts.apiKeyEnv];
+      if (ambient !== undefined && ambient.length > 0) {
+        return assertUsableApiKey(ambient, PLUGIN_NAME, opts.apiKeyEnv);
+      }
+    }
+    throw new LlmError(
+      `llm-llamacpp: no API key for "${opts.apiKeyEnv}"; store it through the credentials service ` +
+        `(the web Models page writes it) or export it in the launching environment`,
+      'MISSING_CREDENTIAL',
+    );
   };
 
   const adapter = new LlamacppAdapter({ options, resolveApiKey, logger: ctx.logger });

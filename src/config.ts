@@ -90,7 +90,7 @@ export const Config = z.object({
    * none; a reverse proxy in front of it may require one. The value is read
    * per request and never stored in the settings document.
    */
-  apiKeyEnv: z.string(),
+  apiKeyEnv: z.string().role('credential-ref'),
   /** Header that carries the key: `authorization` sends `Bearer <key>`, anything else sends the raw key. */
   apiKeyHeader: z.string().default(DEFAULT_API_KEY_HEADER),
   /** Maximum idle interval (ms) for one outstanding provider stream read. */
