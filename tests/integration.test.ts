@@ -5,7 +5,13 @@
  * agent-loop internals.
  */
 import { Context, type Plugin } from '@deepseek-ai/cordis';
-import LlmRuntime, { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import LlmRuntime, {
+  CallId,
+  createAssistantMessage,
+  createToolResultMessage,
+  createUserMessage,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Config, PLUGIN_NAME, PROVIDER, apply, type ConfigType } from '../src/index.ts';
 import { SSE_DONE } from '../src/protocol.ts';
@@ -118,5 +124,91 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
     if (finish.reason.kind === 'error') {
       expect(finish.reason.failure).toMatchObject({ code: 'SERVER', status: 503, message: 'model not loaded' });
     }
+  });
+
+  it('round-trips tool schemas and streamed tool calls through ctx.llm (issue #5)', async () => {
+    // First turn: fragmented tool-call frames from a mocked llama.cpp server.
+    fetchMock.mockResolvedValueOnce(
+      sseResponse([
+        data({ id: '1', model: 'qwen3', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_7', function: { name: 'get_' } }] }, finish_reason: null }] }),
+        data({ id: '1', model: 'qwen3', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { name: 'time', arguments: '{"tz":' } }] }, finish_reason: null }] }),
+        data({ id: '1', model: 'qwen3', choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"Asia/Shanghai"}' } }] }, finish_reason: null }] }),
+        data({ id: '1', model: 'qwen3', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }),
+        `data: ${SSE_DONE}\n\n`,
+      ]),
+    );
+    // Second turn: the tool result is fed back as a role:tool message.
+    fetchMock.mockResolvedValueOnce(
+      sseResponse([
+        data({ id: '2', model: 'qwen3', choices: [{ index: 0, delta: { content: 'The time is 14:30.' }, finish_reason: null }] }),
+        data({ id: '2', model: 'qwen3', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        `data: ${SSE_DONE}\n\n`,
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const ctx = await mounted({ baseURL: 'http://127.0.0.1:8080' });
+
+    const tools = [{
+      name: 'get_time',
+      description: 'Get the current local time',
+      parameters: { type: 'object', properties: { tz: { type: 'string' } }, required: [] },
+    }];
+
+    // Turn 1: offer the tool; the provider must surface the assembled call.
+    const firstChunks: StreamChunk[] = [];
+    for await (const chunk of ctx.llm.stream({
+      provider: PROVIDER,
+      model: 'qwen3',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'What time is it in Asia/Shanghai?' }], source: { kind: 'user' } })],
+      tools,
+    })) {
+      firstChunks.push(chunk);
+    }
+    const toolEnds = firstChunks
+      .filter((c): c is Extract<StreamChunk, { type: 'block-end' }> => c.type === 'block-end')
+      .map((c) => c.block);
+    expect(toolEnds).toEqual([
+      { type: 'tool-call', id: CallId('call_7'), name: 'get_time', arguments: '{"tz":"Asia/Shanghai"}' },
+    ]);
+    expect(firstChunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } });
+
+    // The first wire request carried the tool schema.
+    const firstWire = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string) as {
+      tools?: unknown[];
+    };
+    expect(firstWire.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'get_time',
+        description: 'Get the current local time',
+        parameters: { type: 'object', properties: { tz: { type: 'string' } }, required: [] },
+      },
+    }]);
+
+    // Turn 2: assistant tool call + tool result back to the model.
+    const history = [
+      createUserMessage({ content: [{ type: 'text', text: 'What time is it in Asia/Shanghai?' }], source: { kind: 'user' } }),
+      createAssistantMessage({
+        content: [{ type: 'tool-call', id: CallId('call_7'), name: 'get_time', arguments: '{"tz":"Asia/Shanghai"}' }],
+        source: { provider: PROVIDER, model: 'qwen3' },
+      }),
+      createToolResultMessage({
+        callId: CallId('call_7'),
+        content: [{ type: 'text', text: '14:30' }],
+        isError: false,
+      }),
+    ];
+    const secondChunks: StreamChunk[] = [];
+    for await (const chunk of ctx.llm.stream({ provider: PROVIDER, model: 'qwen3', messages: history, tools })) {
+      secondChunks.push(chunk);
+    }
+    expect(secondChunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'stop' } });
+
+    // The second wire request carried the tool result as a role:tool message.
+    const secondWire = JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string) as {
+      messages: Array<{ role: string; tool_call_id?: string; content?: string }>;
+    };
+    const toolMessage = secondWire.messages.find((m) => m.role === 'tool');
+    expect(toolMessage).toEqual({ role: 'tool', tool_call_id: 'call_7', content: '14:30' });
   });
 });

@@ -73,8 +73,8 @@ describe('tool schema serialization', () => {
 describe('streamed tool-call translation', () => {
   it('accumulates fragmented ids, names, and argument fragments', async () => {
     const { adapter } = harness({}, [
-      toolDelta({ index: 0, id: 'call_7', function: { name: 'get_' } }),
-      toolDelta({ index: 0, function: { name: 'time', arguments: '{"tz":' } }),
+      toolDelta({ index: 0, id: 'call_', function: { name: 'get_' } }),
+      toolDelta({ index: 0, id: '7', function: { name: 'time', arguments: '{"tz":' } }),
       toolDelta({ index: 0, function: { arguments: '"UTC"}' } }),
       chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }),
     ]);
@@ -82,11 +82,11 @@ describe('streamed tool-call translation', () => {
     expect(error).toBeUndefined();
 
     const deltas = chunks.filter((c): c is ToolCallDeltaChunk => c.type === 'tool-call-delta');
-    // The first frame carries the id/name with no argument fragment yet; its
-    // delta (empty argumentsDelta) must still be emitted so id/name reach the
-    // consumer, exactly as the provider sent them.
+    // The first frame carries the id/name fragments with no argument fragment
+    // yet; its delta (empty argumentsDelta) must still be emitted so id/name
+    // reach the consumer, exactly as the provider sent them.
     expect(deltas.map((d) => d.argumentsDelta)).toEqual(['', '{"tz":', '"UTC"}']);
-    expect(deltas[0]?.id).toBe(CallId('call_7'));
+    expect(deltas.map((d) => d.id)).toEqual([CallId('call_'), CallId('call_7'), CallId('call_7')]);
     expect(deltas[0]?.name).toBe('get_');
 
     const ends = chunks.filter((c) => c.type === 'block-end');
@@ -100,10 +100,12 @@ describe('streamed tool-call translation', () => {
     expect(chunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } });
   });
 
-  it('supports multiple tool calls in one response, preserving order and ids', async () => {
+  it('supports multiple tool calls with independently fragmented ids, ordered by first-seen index', async () => {
     const { adapter } = harness({}, [
-      toolDelta({ index: 0, id: 'call_a', function: { name: 'get_time', arguments: '{}' } }),
-      toolDelta({ index: 1, id: 'call_b', function: { name: 'echo', arguments: '{"text":"hi"}' } }),
+      toolDelta({ index: 0, id: 'call_', function: { name: 'get_time', arguments: '{}' } }),
+      toolDelta({ index: 1, id: 'call_', function: { name: 'echo', arguments: '{"text":"hi"}' } }),
+      toolDelta({ index: 1, id: 'b' }),
+      toolDelta({ index: 0, id: 'a' }),
       chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }),
     ]);
     const { chunks, error } = await collect(adapter.stream(baseOptions));
@@ -119,6 +121,26 @@ describe('streamed tool-call translation', () => {
       { type: 'tool-call', id: CallId('call_a'), name: 'get_time', arguments: '{}' },
       { type: 'tool-call', id: CallId('call_b'), name: 'echo', arguments: '{"text":"hi"}' },
     ]);
+  });
+
+  it('fails explicitly when a tool call never receives an id', async () => {
+    const { adapter } = harness({}, [
+      toolDelta({ index: 0, function: { name: 'get_time', arguments: '{}' } }),
+      chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }),
+    ]);
+    const { error } = await collect(adapter.stream(baseOptions));
+    expect((error as Error & { code: string }).code).toBe('INCOMPLETE_TOOL_CALL');
+    expect((error as Error).message).toMatch(/missing an id/);
+  });
+
+  it('fails explicitly when a tool call never receives a function name', async () => {
+    const { adapter } = harness({}, [
+      toolDelta({ index: 0, id: 'call_1', function: { arguments: '{}' } }),
+      chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }),
+    ]);
+    const { error } = await collect(adapter.stream(baseOptions));
+    expect((error as Error & { code: string }).code).toBe('INCOMPLETE_TOOL_CALL');
+    expect((error as Error).message).toMatch(/missing a function name/);
   });
 
   it('handles mixed text and tool-call output in one response', async () => {

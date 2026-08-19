@@ -96,9 +96,11 @@ Harness tool schemas (`GenerateOptions.tools`) are sent to llama.cpp as
 OpenAI-compatible `tools`, and streamed `tool_calls` deltas (fragmented ids,
 function names, and JSON argument fragments, multiple calls per response,
 mixed text+tool output) are reconstructed into Harness tool-call blocks.
-Malformed or empty argument JSON fails the stream with `INVALID_TOOL_ARGUMENTS`.
-Tool execution stays with Harness `ctx.tools`; this provider only translates
-the protocol.
+Malformed or empty argument JSON fails the stream with
+`INVALID_TOOL_ARGUMENTS`; a completed tool call that never received a final
+non-empty id or function name fails with `INCOMPLETE_TOOL_CALL` instead of
+emitting an unusable empty-branded call. Tool execution stays with Harness
+`ctx.tools`; this provider only translates the protocol.
 
 ### End-to-end example
 

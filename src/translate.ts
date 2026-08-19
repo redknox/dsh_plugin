@@ -127,7 +127,13 @@ export async function* translate(
           order.push(block);
           yield { type: 'block-start', index: block.index, blockType: 'tool-call' };
         }
-        if (call.id !== undefined) block.callId = call.id;
+        if (call.id !== undefined) {
+          // Ids arrive as fragments like function names and arguments: a
+          // provider emitting `call_` then `7` for one call index must yield
+          // `call_7`, not the last fragment. (Providers that repeat a whole id
+          // in every frame do not follow the streaming delta contract.)
+          block.callId = (block.callId ?? '') + call.id;
+        }
         if (call.function?.name !== undefined) {
           // Function names arrive as fragments like arguments: accumulate.
           block.name = (block.name ?? '') + call.function.name;
@@ -159,13 +165,24 @@ export async function* translate(
           'INVALID_TOOL_ARGUMENTS',
         );
       }
+      // A syntactically assembled tool call with no final id or function name
+      // cannot be correlated or executed by the harness; fail explicitly
+      // instead of emitting an empty branded id/name.
+      const id = block.callId ?? '';
+      const name = block.name ?? '';
+      if (id.length === 0 || name.length === 0) {
+        throw new LlmError(
+          `llama.cpp streamed tool call is missing ${id.length === 0 ? 'an id' : 'a function name'}`,
+          'INCOMPLETE_TOOL_CALL',
+        );
+      }
       yield {
         type: 'block-end',
         index: block.index,
         block: {
           type: 'tool-call',
-          id: CallId(block.callId ?? ''),
-          name: block.name ?? '',
+          id: CallId(id),
+          name,
           arguments: block.text,
         },
       };
