@@ -99,6 +99,12 @@ export interface ReasoningPolicyConfig {
 export interface AdaptiveReasoningConfig {
   /** Master switch for the adaptive layer. */
   readonly enabled: boolean;
+  /**
+   * Optional adaptive base budget that intentionally overrides the selected
+   * preset budget before context adjustment (issue #6, blocker 2). Must lie
+   * within the configured (or default) min/max bounds.
+   */
+  readonly defaultBudgetTokens?: number;
   /** Hard lower bound for the adjusted budget; default 512. */
   readonly minBudgetTokens?: number;
   /** Hard upper bound for the adjusted budget; default 65536. */
@@ -220,8 +226,14 @@ export function validateReasoningConfig(config: ReasoningPolicyConfig, path: str
   }
   const adaptive = config.adaptive;
   if (adaptive === undefined) return;
-  if (!adaptive.enabled && (adaptive.minBudgetTokens !== undefined || adaptive.maxBudgetTokens !== undefined || (adaptive.hints?.length ?? 0) > 0)) {
-    throw new Error(`${path}.adaptive: minBudgetTokens/maxBudgetTokens/hints require enabled: true`);
+  if (
+    !adaptive.enabled &&
+    (adaptive.defaultBudgetTokens !== undefined ||
+      adaptive.minBudgetTokens !== undefined ||
+      adaptive.maxBudgetTokens !== undefined ||
+      (adaptive.hints?.length ?? 0) > 0)
+  ) {
+    throw new Error(`${path}.adaptive: defaultBudgetTokens/minBudgetTokens/maxBudgetTokens/hints require enabled: true`);
   }
   const min = adaptive.minBudgetTokens ?? DEFAULT_ADAPTIVE_MIN_BUDGET;
   const max = adaptive.maxBudgetTokens ?? DEFAULT_ADAPTIVE_MAX_BUDGET;
@@ -234,6 +246,16 @@ export function validateReasoningConfig(config: ReasoningPolicyConfig, path: str
   if (min > max) {
     throw new Error(`${path}.adaptive: minBudgetTokens must not exceed maxBudgetTokens`);
   }
+  if (adaptive.defaultBudgetTokens !== undefined) {
+    if (!Number.isSafeInteger(adaptive.defaultBudgetTokens) || adaptive.defaultBudgetTokens <= 0) {
+      throw new Error(`${path}.adaptive: defaultBudgetTokens must be a positive safe integer`);
+    }
+    if (adaptive.defaultBudgetTokens < min || adaptive.defaultBudgetTokens > max) {
+      throw new Error(
+        `${path}.adaptive: defaultBudgetTokens must lie within [minBudgetTokens, maxBudgetTokens]`,
+      );
+    }
+  }
   for (const hint of adaptive.hints ?? []) {
     if (typeof hint !== 'string' || hint.length === 0) {
       throw new Error(`${path}.adaptive: hints must contain only non-empty strings`);
@@ -241,25 +263,35 @@ export function validateReasoningConfig(config: ReasoningPolicyConfig, path: str
   }
 }
 
+/** One policy resolution input: explicit effort, purpose, and adaptive context. */
+export interface ReasoningPolicyInput {
+  /** Explicit per-request effort, when the harness selected one. */
+  readonly effort?: ReasoningEffortIdBrand;
+  /** Optional call purpose; `session-title` disables thinking. */
+  readonly purpose?: 'compaction' | 'session-title';
+  /** Request context consumed by the adaptive layer; optional for static use. */
+  readonly context?: ReasoningPolicyContext;
+}
+
 /**
- * Resolve the reasoning policy for one request. Precedence (tested): explicit
- * per-request effort > selected preset (with expert adjustments) > adaptive
- * adjustment > provider defaults / safety bounds. An explicit expert
- * `budgetTokens` beats the adaptive layer; a `session-title` purpose always
- * disables thinking (bounded output for titles).
- * @param effort - explicit per-request effort, when the harness selected one.
- * @param config - plugin-level reasoning configuration.
- * @param purpose - optional call purpose; `session-title` disables thinking.
- * @param context - request context consumed by the adaptive layer (issue #6);
- *   static resolution is unchanged when omitted or when adaptive is disabled.
- * @returns the resolved semantic policy plus an adaptive explanation, if any.
+ * The inference-policy seam (issue #6, blocker 1). A policy turns one request
+ * shape into a reasoning decision; it is independent of HTTP transport and of
+ * Harness internals. The adapter depends on this seam only — it has no
+ * knowledge of whether the underlying policy is static or adaptive.
  */
-export function resolveReasoningPolicy(
+export interface ReasoningPolicy {
+  resolve(input: ReasoningPolicyInput): ReasoningDecision;
+}
+
+/**
+ * Pure static preset resolution: the default policy. Applies per-request
+ * effort > preset > expert-override precedence without any adaptive branch.
+ */
+export function resolveStaticPolicy(
   effort: ReasoningEffortIdBrand | undefined,
   config: ReasoningPolicyConfig,
   purpose?: 'compaction' | 'session-title',
-  context?: ReasoningPolicyContext,
-): ReasoningDecision {
+): ResolvedReasoningPolicy {
   if (purpose === 'session-title') {
     return { enabled: false, preserveThinking: false, emitThinking: true, wire: config.wire };
   }
@@ -274,8 +306,7 @@ export function resolveReasoningPolicy(
   const expert = config.expert;
   const enabled = expert?.enabled ?? preset.enabled;
   const effortValue = expert?.effort ?? preset.effort;
-  const budgetTokensExplicit = expert?.budgetTokens !== undefined;
-  let budgetTokens = expert?.budgetTokens ?? preset.budgetTokens;
+  const budgetTokens = expert?.budgetTokens ?? preset.budgetTokens;
   const preserveThinking = expert?.preserveThinking ?? preset.preserveThinking;
   const emitThinking = expert?.emitThinking ?? preset.emitThinking;
   if (!enabled && (effortValue !== undefined || budgetTokens !== undefined)) {
@@ -284,18 +315,6 @@ export function resolveReasoningPolicy(
       'INVALID_REASONING_CONFIG',
     );
   }
-  let reason: string | undefined;
-  if (
-    enabled &&
-    budgetTokens !== undefined &&
-    !budgetTokensExplicit &&
-    config.adaptive?.enabled === true &&
-    context !== undefined
-  ) {
-    const adjusted = adaptBudget(budgetTokens, context, config.adaptive);
-    budgetTokens = adjusted.budgetTokens;
-    reason = `adaptive: ${adjusted.reason}`;
-  }
   return {
     enabled,
     ...(effortValue !== undefined ? { effort: effortValue } : {}),
@@ -303,8 +322,82 @@ export function resolveReasoningPolicy(
     preserveThinking,
     emitThinking,
     wire: config.wire,
-    ...(reason !== undefined ? { reason } : {}),
   };
+}
+
+/** The default policy: static preset resolution. */
+export class StaticReasoningPolicy implements ReasoningPolicy {
+  readonly config: ReasoningPolicyConfig;
+
+  constructor(config: ReasoningPolicyConfig) {
+    this.config = config;
+  }
+
+  resolve(input: ReasoningPolicyInput): ReasoningDecision {
+    return resolveStaticPolicy(input.effort, this.config, input.purpose);
+  }
+}
+
+/**
+ * Optional adaptive policy: a decorator over a base (static) policy that
+ * adjusts the base budget from request context within hard bounds and explains
+ * the choice. Precedence: an explicit expert `budgetTokens` and any explicit
+ * per-request effort win (no adjustment); otherwise the base budget is either
+ * the selected preset budget or the configured adaptive `defaultBudgetTokens`
+ * when that intentionally overrides the preset base; then context adjustment;
+ * then the min/max clamp.
+ */
+export class AdaptiveReasoningPolicy implements ReasoningPolicy {
+  readonly base: ReasoningPolicy;
+  readonly config: ReasoningPolicyConfig;
+
+  constructor(base: ReasoningPolicy, config: ReasoningPolicyConfig) {
+    this.base = base;
+    this.config = config;
+  }
+
+  resolve(input: ReasoningPolicyInput): ReasoningDecision {
+    const decision = this.base.resolve(input);
+    const adaptive = this.config.adaptive;
+    if (adaptive?.enabled !== true) return decision;
+    if (!decision.enabled || decision.budgetTokens === undefined) return decision;
+    // An explicit expert budget always wins over the adaptive layer.
+    if (this.config.expert?.budgetTokens !== undefined) return decision;
+    if (input.context === undefined) return decision;
+    const base = adaptive.defaultBudgetTokens ?? decision.budgetTokens;
+    const adjusted = adaptBudget(base, input.context, adaptive);
+    return {
+      ...decision,
+      budgetTokens: adjusted.budgetTokens,
+      reason: `adaptive: ${adjusted.reason}`,
+    };
+  }
+}
+
+/** Build the policy implied by the plugin-level reasoning configuration. */
+export function buildReasoningPolicy(config: ReasoningPolicyConfig): ReasoningPolicy {
+  const base = new StaticReasoningPolicy(config);
+  return config.adaptive?.enabled === true ? new AdaptiveReasoningPolicy(base, config) : base;
+}
+
+/**
+ * Convenience: resolve one request through the policy implied by the config.
+ * Precedence (tested): explicit per-request effort > selected preset (with
+ * expert adjustments) > adaptive adjustment > provider defaults / safety
+ * bounds. Static resolution is unchanged when the adaptive layer is off.
+ * @param effort - explicit per-request effort, when the harness selected one.
+ * @param config - plugin-level reasoning configuration.
+ * @param purpose - optional call purpose; `session-title` disables thinking.
+ * @param context - request context consumed by the adaptive layer (issue #6).
+ * @returns the resolved semantic policy plus an adaptive explanation, if any.
+ */
+export function resolveReasoningPolicy(
+  effort: ReasoningEffortIdBrand | undefined,
+  config: ReasoningPolicyConfig,
+  purpose?: 'compaction' | 'session-title',
+  context?: ReasoningPolicyContext,
+): ReasoningDecision {
+  return buildReasoningPolicy(config).resolve({ effort, purpose, context });
 }
 
 /** The harness-visible reasoning efforts for one provider/model route. */

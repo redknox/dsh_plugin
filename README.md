@@ -92,17 +92,21 @@ Semantics of the expert knobs:
 
 ### Adaptive reasoning budget (issue #6)
 
-Optional: adjust the preset budget from request context instead of using only
-static presets. Enable it under `reasoning.adaptive`:
+Optional: choose the reasoning budget from request context instead of using
+only static presets. The policy layer is a small provider-domain seam
+(`ReasoningPolicy`) with static preset resolution as the default implementation
+and an optional adaptive decorator; the adapter depends only on that seam.
+Enable adaptive mode under `reasoning.adaptive`:
 
 ```yaml
 reasoning:
   preset: medium
   adaptive:
     enabled: true
-    minBudgetTokens: 512        # optional hard lower bound
-    maxBudgetTokens: 65536      # optional hard upper bound
-    hints: [deep]               # optional task/profile hints: short | deep | precise
+    defaultBudgetTokens: 4096  # optional; overrides the preset base before adjustment
+    minBudgetTokens: 512       # optional hard lower bound
+    maxBudgetTokens: 65536     # optional hard upper bound
+    hints: [deep]              # optional task/profile hints: short | deep | precise
 ```
 
 Policy inputs: message count and estimated prompt size (adapter-side ~4
@@ -117,16 +121,20 @@ explicit per-request effort
         ↓
 selected preset (with expert overrides)
         ↓
-adaptive adjustment        (only when the budget came from the preset;
-                            an explicit expert budgetTokens always wins)
+adaptive configured default/base budget (only when set, and only when the
+  budget was not fixed by an explicit expert budgetTokens)
+        ↓
+adaptive context adjustment
         ↓
 provider defaults / safety bounds (min/max clamp)
 ```
 
-The selected effort and budget are emitted as a `debug` log line per request
-(`llm-llamacpp reasoning decision: …`), so the choice is always inspectable.
-Adaptive mode can be enabled/disabled without touching adapter code; with it
-off, static preset resolution from #4 behaves exactly as before.
+`defaultBudgetTokens` must lie within the configured (or default) min/max
+bounds and is validated at load. The selected effort and budget are emitted as
+a `debug` log line per request (`llm-llamacpp reasoning decision: …`), so the
+choice is always inspectable. Adaptive mode can be enabled/disabled without
+touching adapter code; with it off, static preset resolution from #4 behaves
+exactly as before.
 
 ## Tools
 

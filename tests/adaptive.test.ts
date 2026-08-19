@@ -5,9 +5,12 @@
  * expert/per-request precedence, and explain its choices in debug metadata.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ReasoningEffortId, type ToolResultBlock } from '@deepseek-ai/dsh-llm';
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import {
+  AdaptiveReasoningPolicy,
+  StaticReasoningPolicy,
   adaptBudget,
+  buildReasoningPolicy,
   resolveReasoningPolicy,
   type AdaptiveReasoningConfig,
   type ReasoningPolicyConfig,
@@ -165,6 +168,90 @@ describe('config validation for adaptive', () => {
       reasoning: { adaptive: { enabled: true, minBudgetTokens: 1024, maxBudgetTokens: 8192, hints: ['deep'] } },
     });
     expect(options.reasoning.adaptive).toEqual({ enabled: true, minBudgetTokens: 1024, maxBudgetTokens: 8192, hints: ['deep'] });
+  });
+});
+
+describe('ReasoningPolicy seam (issue #6, blocker 1)', () => {
+  const staticOnly: ReasoningPolicyConfig = { enabled: true, preset: 'medium', wire: 'chat-template-kwargs' };
+
+  it('builds the static policy by default and the adaptive decorator when enabled', () => {
+    expect(buildReasoningPolicy(staticOnly)).toBeInstanceOf(StaticReasoningPolicy);
+    expect(buildReasoningPolicy(baseConfig)).toBeInstanceOf(AdaptiveReasoningPolicy);
+  });
+
+  it('the static policy ignores request context entirely', () => {
+    const policy = new StaticReasoningPolicy(staticOnly);
+    const decision = policy.resolve({ context: context({ messages: 64, toolsAvailable: true }) });
+    expect(decision.budgetTokens).toBe(4096);
+    expect(decision.reason).toBeUndefined();
+  });
+
+  it('the adaptive policy decorates the base without changing static semantics', () => {
+    const policy = new AdaptiveReasoningPolicy(new StaticReasoningPolicy(staticOnly), baseConfig);
+    // session-title still disables thinking through the decorator.
+    const titled = policy.resolve({ purpose: 'session-title', context: context({ messages: 64 }) });
+    expect(titled.enabled).toBe(false);
+    expect(titled.budgetTokens).toBeUndefined();
+    // A neutral context runs the adaptive layer but changes nothing.
+    const neutral = policy.resolve({ context: context({ messages: 0, estimatedPromptTokens: 0 }) });
+    expect(neutral.budgetTokens).toBe(4096);
+    expect(neutral.reason).toBe('adaptive: no adjustment');
+  });
+
+  it('the adapter depends on the policy seam, not on an adaptive branch', async () => {
+    // The adapter path exercises buildReasoningPolicy(...).resolve(...) for
+    // both configurations; static config yields no adaptive reason.
+    const debug = vi.fn();
+    const { adapter } = harness({ reasoning: { adaptive: { enabled: true } } }, [], { debug });
+    await collect(adapter.stream({ ...baseOptions, messages: [] }));
+    expect(debug.mock.calls[0]?.[0] as string).toContain('adaptive:');
+  });
+});
+
+describe('adaptive defaultBudgetTokens (issue #6, blocker 2)', () => {
+  it('overrides the preset base before context adjustment', () => {
+    const config: ReasoningPolicyConfig = {
+      ...baseConfig,
+      preset: 'low', // preset budget is 1024
+      adaptive: { enabled: true, defaultBudgetTokens: 8000 },
+    };
+    // Neutral context: base = 8000, no adjustment.
+    expect(resolveReasoningPolicy(undefined, config, undefined, context({ messages: 0, estimatedPromptTokens: 0 })).budgetTokens).toBe(8000);
+    // Context adjustment applies on top of the configured base: 8000 * 1.1 (8 messages) = 8800.
+    expect(resolveReasoningPolicy(undefined, config, undefined, context({ messages: 8, estimatedPromptTokens: 0 })).budgetTokens).toBe(8800);
+  });
+
+  it('never lets the adaptive default override an explicit expert budget', () => {
+    const config: ReasoningPolicyConfig = {
+      ...baseConfig,
+      expert: { budgetTokens: 777 },
+      adaptive: { enabled: true, defaultBudgetTokens: 8000 },
+    };
+    const decision = resolveReasoningPolicy(undefined, config, undefined, context({ messages: 64 }));
+    expect(decision.budgetTokens).toBe(777);
+    expect(decision.reason).toBeUndefined();
+  });
+
+  it('clamps the configured default to the safety bounds even without context', () => {
+    const config: ReasoningPolicyConfig = {
+      ...baseConfig,
+      adaptive: { enabled: true, defaultBudgetTokens: 2000, minBudgetTokens: 4096 },
+    };
+    const decision = resolveReasoningPolicy(undefined, config);
+    expect(decision.budgetTokens).toBe(4096);
+  });
+
+  it('validates defaultBudgetTokens against min/max at load', () => {
+    expect(() => resolveAdapterOptions({ reasoning: { adaptive: { enabled: true, defaultBudgetTokens: 100000 } } }))
+      .toThrow(/defaultBudgetTokens must lie within/);
+    expect(() => resolveAdapterOptions({ reasoning: { adaptive: { enabled: true, defaultBudgetTokens: 100, minBudgetTokens: 512 } } }))
+      .toThrow(/defaultBudgetTokens must lie within/);
+    expect(() => resolveAdapterOptions({ reasoning: { adaptive: { enabled: true, defaultBudgetTokens: 0 } } }))
+      .toThrow(/defaultBudgetTokens must be a positive safe integer/);
+    expect(() => resolveAdapterOptions({ reasoning: { adaptive: { defaultBudgetTokens: 8000 } } }))
+      .toThrow(/require enabled: true/);
+    expect(resolveAdapterOptions({ reasoning: { adaptive: { enabled: true, defaultBudgetTokens: 8000 } } })
+      .reasoning.adaptive).toEqual({ enabled: true, defaultBudgetTokens: 8000 });
   });
 });
 

@@ -27,7 +27,7 @@ import {
 import type { LlamaCppChatCompletionChunk, LlamaCppChatCompletionRequest } from './protocol.ts';
 import type { ResolvedAdapterOptions } from './config.ts';
 import {
-  resolveReasoningPolicy,
+  buildReasoningPolicy,
   reasoningEfforts,
   type ReasoningPolicyContext,
 } from './reasoning.ts';
@@ -140,7 +140,13 @@ export class LlamacppAdapter extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const opts = this.deps.options();
     const context = policyContext(options, opts.reasoning.adaptive?.hints);
-    const reasoning = resolveReasoningPolicy(options.reasoningEffort, opts.reasoning, options.purpose, context);
+    // The adapter depends only on the inference-policy seam; it has no
+    // knowledge of whether the resolved policy is static or adaptive.
+    const reasoning = buildReasoningPolicy(opts.reasoning).resolve({
+      effort: options.reasoningEffort,
+      purpose: options.purpose,
+      context,
+    });
     this.deps.logger?.debug(
       `llm-llamacpp reasoning decision: ${reasoning.reason ?? 'static preset'} ` +
         `(enabled=${reasoning.enabled}, effort=${reasoning.effort ?? '-'}, budget=${reasoning.budgetTokens ?? '-'})`,

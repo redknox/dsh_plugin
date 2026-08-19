@@ -47,6 +47,7 @@ const ReasoningExpertSchema = z.object({
 /** Adaptive budget bounds and hints (issue #6). */
 const AdaptiveSchema = z.object({
   enabled: z.boolean().default(false),
+  defaultBudgetTokens: z.number().step(1).min(1),
   minBudgetTokens: z.number().step(1).min(1),
   maxBudgetTokens: z.number().step(1).min(1),
   hints: z.array(z.string()),
@@ -113,6 +114,7 @@ export type ConfigType = {
     wire?: ReasoningWireMode;
     adaptive?: {
       enabled?: boolean;
+      defaultBudgetTokens?: number;
       minBudgetTokens?: number;
       maxBudgetTokens?: number;
       hints?: string[];
@@ -180,6 +182,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
       ? {
           adaptive: {
             enabled: adaptiveRaw.enabled ?? false,
+            ...(adaptiveRaw.defaultBudgetTokens !== undefined ? { defaultBudgetTokens: adaptiveRaw.defaultBudgetTokens } : {}),
             ...(adaptiveRaw.minBudgetTokens !== undefined ? { minBudgetTokens: adaptiveRaw.minBudgetTokens } : {}),
             ...(adaptiveRaw.maxBudgetTokens !== undefined ? { maxBudgetTokens: adaptiveRaw.maxBudgetTokens } : {}),
             ...(adaptiveRaw.hints !== undefined && adaptiveRaw.hints.length > 0 ? { hints: adaptiveRaw.hints } : {}),
