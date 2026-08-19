@@ -9,63 +9,117 @@ The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** Issues #1-#5 are implemented: scaffold + registration, the
-> llama.cpp streaming client, `LlmAdapter` message/stream translation, Qwen
-> reasoning presets (`off`/`low`/`medium`/`xhigh`) with expert overrides, and
-> tool-call streaming/schema support. Adaptive budgets (#6) and reliability
-> (#7, including the provider-owned retry policy) land next.
+> **Status.** Issues #1-#7 all implemented, approved, and validated end-to-end
+> against a real llama.cpp Qwen3.8 server: text streaming with reasoning,
+> parallel tool calls, reasoning off/on and both wire modes, and multi-endpoint
+> fallback on real network failures.
 
 ## Requirements
 
-- Node.js >= 20 (the harness host provides `@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`,
-  and `@deepseek-ai/dsh-settings` as peer dependencies)
-- A local llama.cpp server (e.g. `llama-server -m path/to/qwen3.gguf --port 8080`)
+- DeepSeek Harness with the web profile (`dsh web`); the host provides
+  `@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-settings`,
+  and `@deepseek-ai/dsh-credentials` as peer dependencies.
+- A llama.cpp server with an OpenAI-compatible endpoint
+  (e.g. `llama-server -m path/to/qwen3.gguf --port 8080`), optionally started
+  with `--api-key <token>`.
 
-## Mounting in the harness config
+## Installation
 
-Add an entry to the harness plugin list (e.g. `cordis.yml`):
+Build the plugin:
 
-```yaml
-- id: llm-llamacpp
-  name: llm-llamacpp            # or a path to this package's dist/index.js
-  config:
-    baseURL: http://127.0.0.1:8080  # llama.cpp OpenAI-compatible endpoint
-    model: qwen3                    # default model id sent to the wire
-    providerName: llama.cpp (Local) # name shown in model selectors
-    # apiKeyEnv: LLAMACPP_API_KEY   # optional; set when a reverse proxy requires a key
-    #   resolved per request through ctx.credentials (the web Models page can
-    #   store it), falling back to the launching environment
-    # apiKeyHeader: authorization   # 'authorization' sends 'Bearer <key>', anything else sends the raw key
-    # streamIdleTimeoutMs: 300000
-    # requestTimeoutMs: 60000  # optional hard per-attempt timeout, regardless of activity
-    # endpoints:               # optional ordered fallback list; replaces baseURL
-    #   - http://127.0.0.1:8080
-    #   - http://10.0.0.2:8080
-    # retryPolicy:             # optional; omission uses bounded normal defaults
-    #   mode: normal           # normal | always
-    #   maxRetries: 2
-    #   retryableCodes: [RATE_LIMIT, SERVER, TIMEOUT, TRANSPORT, EMPTY_RESPONSE]
-    #   backoff: { initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 }
-    # reasoning:                    # optional semantic Qwen reasoning controls
-    #   enabled: true               # false advertises and allows only 'off'
-    #   preset: medium              # off | low | medium | xhigh
-    #   wire: chat-template-kwargs  # chat-template-kwargs | reasoning-fields
-    #   expert:                     # explicit expert override surface
-    #     enabled: true
-    #     effort: medium
-    #     budgetTokens: 4096
-    #     preserveThinking: true
+```bash
+cd /path/to/llm-llamacpp
+npm install
+npm run build
 ```
 
-The plugin registers provider route `llamacpp-local` and the configurable-provider
-directory entry `llamacpp-local@llm-llamacpp`. Select the provider in the harness
-by `provider: llamacpp-local`; the `model` value is passed through to the wire
-verbatim, so changing Qwen models needs no plugin reload.
+When mounting into a running harness, keep a **single copy** of the shared
+`@deepseek-ai/*` packages so the plugin shares identity with the host
+(`LlmAdapter`/`LlmError`/Cordis instances must be the host's). Point the
+plugin's dependency directory at the harness install's copies:
 
-Configuration is validated at load: an invalid `baseURL` (not an http(s) URL)
-or an empty `model`/`providerName` fails the plugin load clearly. When the
-harness settings service is mounted, the same schema drives an `llm-llamacpp`
-settings section that can override any field without a restart.
+```bash
+# <harness-install>/node_modules is the directory containing @deepseek-ai/
+ln -s <harness-install>/node_modules/@deepseek-ai node_modules/@deepseek-ai
+```
+
+Mount it in the web profile's patch layer (`~/.dsh/profiles/web/cordis.patch.yml`
+or the equivalent patch file of your profile). New plugins are added with an
+`insert` patch entry:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- insert:
+    - id: llm-llamacpp
+      name: /absolute/path/to/llm-llamacpp/dist/index.js
+      config:
+        baseURL: http://10.60.84.212:8040   # llama.cpp OpenAI-compatible base URL
+        model: /models/Qwen3.8-27B-Q8_0.gguf # exact id from the server's /v1/models
+        providerName: llama.cpp (Local)      # name shown in model selectors
+        apiKeyEnv: LLAMA_API_TOKEN           # credential reference, not the key itself
+        # ... optional keys below (all optional) ...
+```
+
+The harness watches the patch file (Cordis HMR) and mounts the plugin live —
+no restart needed. Verify it is registered:
+
+```bash
+curl -s -X POST http://127.0.0.1:3080/api/llm.providers \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"client-request","rpcId":"probe","method":"llm.providers","payload":{}}'
+# llamacpp-local should appear with "active": true
+```
+
+Then select **the provider/model in the web GUI's model selector** and chat.
+The `model` value is passed to the wire verbatim; the plugin registers the
+`llamacpp-local` provider route and the configurable-provider directory entry
+`llamacpp-local@llm-llamacpp`.
+
+## Configuration
+
+### `baseURL` (server address)
+
+The llama.cpp server's OpenAI-compatible **base** URL — scheme + host + port,
+**without** `/v1` (the client appends `/v1/chat/completions`) and without a
+trailing slash. Local default is `http://127.0.0.1:8080`.
+
+### `model` (model id)
+
+The exact model id the server accepts, listed by `GET /v1/models`. It is
+passed to the wire `model` field verbatim, so changing Qwen models needs no
+plugin reload.
+
+### `apiKeyEnv` (token — never put the key in config)
+
+`apiKeyEnv` names an **environment variable / credential reference**
+(e.g. `LLAMA_API_TOKEN`), not the key itself. The plugin resolves the value
+per request through the DSH credentials seam (`ctx.credentials`, whose `env`
+layer covers the launching environment and whose store the web Models page
+can write), falling back to a direct `process.env` read when no credentials
+service is mounted. Provide the token either way:
+
+```bash
+export LLAMA_API_TOKEN=<your-token>   # in the shell that launches dsh web
+```
+
+or store it via the web GUI's Models page. A configured reference that
+resolves nowhere fails clearly with `MISSING_CREDENTIAL`.
+
+Optional keys (all documented above in the example):
+
+| key | default | meaning |
+|---|---|---|
+| `apiKeyHeader` | `authorization` | header carrying the key; `authorization` sends `Bearer <key>`, anything else sends the raw key |
+| `streamIdleTimeoutMs` | `300000` | idle timeout per outstanding provider read |
+| `requestTimeoutMs` | — | hard per-attempt deadline, regardless of activity |
+| `endpoints` | `[baseURL]` | ordered fallback list (replaces `baseURL`); first entry is primary |
+| `retryPolicy` | bounded normal | retryable codes, max retries, exponential backoff with jitter |
+| `reasoning` | medium preset | semantic presets, expert overrides, wire mode, adaptive budget |
+
+Configuration is validated at load: an invalid `baseURL`, a non-http(s)
+endpoint, or an empty `model`/`providerName` fails clearly. When the harness
+settings service is mounted, the same schema drives an `llm-llamacpp` settings
+section that can override any field without a restart.
 
 ## Reasoning (Qwen thinking)
 
