@@ -198,6 +198,12 @@ adapter's translation logic; a single-server local deployment is unchanged.
 - The provider-owned retry policy is registered with the harness
   (`ctx.llm.providerRetryPolicy`) and re-registered in place when it changes,
   so the built-in `dsh-llm-retry` step-level recovery uses the same policy.
+- **Composition with step-level retry**: `dsh-llm-retry` executes the policy at
+  the agent-turn boundary (after a step finishes with a retryable error), while
+  this plugin retries/falls back internally before streaming begins. The two
+  layers compose intentionally at different boundaries, but finite budgets
+  stack: with both engaged, the effective wire-request count per step is up to
+  `(client maxRetries + 1) × (harness maxRetries + 1)`.
 
 ## Development
 

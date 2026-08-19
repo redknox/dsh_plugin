@@ -88,6 +88,49 @@ describe('streamReliably: ordered fallback', () => {
     expect(createClient.mock.calls.map((c) => c[0])).toEqual(['http://a', 'http://b']);
   });
 
+  it('ordered fallback with 3+ endpoints never skips a healthy secondary', async () => {
+    // A fails and enters backoff; the next attempt must select B (the first
+    // remaining healthy endpoint in configuration order), not C.
+    const a = failClient('TRANSPORT');
+    const b = okClient(['from B']);
+    const c = okClient(['never C']);
+    const createClient = vi.fn((baseURL: string) => (
+      baseURL === 'http://a' ? a : baseURL === 'http://b' ? b : c
+    ));
+    const { texts, error } = await collect(streamReliably(request, {
+      endpoints: endpoints('http://a', 'http://b', 'http://c'),
+      retryPolicy: policy({ maxRetries: 2 }),
+      streamIdleTimeoutMs: 1000,
+      createClient,
+    }));
+    expect(error).toBeUndefined();
+    expect(texts).toEqual(['from B']);
+    expect(createClient.mock.calls.map((call) => call[0])).toEqual(['http://a', 'http://b']);
+  });
+
+  it('selects the first remaining healthy candidate when A and B are backing off', async () => {
+    const pool = new EndpointPool();
+    const longBackoff = policy({ initialDelayMs: 10_000, maxDelayMs: 10_000 });
+    pool.recordFailure('http://a', longBackoff);
+    pool.recordFailure('http://b', longBackoff);
+    const a = okClient(['never A']);
+    const b = okClient(['never B']);
+    const c = okClient(['from C']);
+    const createClient = vi.fn((baseURL: string) => (
+      baseURL === 'http://a' ? a : baseURL === 'http://b' ? b : c
+    ));
+    const { texts, error } = await collect(streamReliably(request, {
+      endpoints: endpoints('http://a', 'http://b', 'http://c'),
+      retryPolicy: policy({ maxRetries: 2 }),
+      streamIdleTimeoutMs: 1000,
+      createClient,
+      pool,
+    }));
+    expect(error).toBeUndefined();
+    expect(texts).toEqual(['from C']);
+    expect(createClient.mock.calls.map((call) => call[0])).toEqual(['http://c']);
+  });
+
   it('a single-endpoint success path behaves exactly as before (one attempt)', async () => {
     const client = okClient(['hello']);
     const createClient = vi.fn(() => client);

@@ -106,15 +106,28 @@ export class EndpointPool {
   }
 
   /**
-   * Ordered, health-aware candidate selection for attempt `attempt` (0-based).
-   * Healthy endpoints first in configuration order; when every endpoint is in
-   * backoff, fall back to the full ordered list so a request still makes
-   * progress (failures keep accruing backoff).
+   * Ordered, health-aware candidate selection. Healthy endpoints in
+   * configuration order; when every endpoint is in backoff, fall back to the
+   * full ordered list so a request still makes progress (failures keep
+   * accruing backoff).
+   *
+   * With `previous` given (the endpoint just attempted), the next candidate is
+   * the next healthy endpoint AFTER it in configuration order, wrapping — so
+   * for `[A, B, C]` with `A` failed and in backoff, the next attempt selects
+   * `B` (never skipping it because the global attempt counter no longer lines
+   * up with the shortened healthy list). Without `previous`, the first healthy
+   * endpoint in configuration order is selected.
    */
-  nextCandidate(endpoints: readonly ReliabilityEndpoint[], attempt: number): ReliabilityEndpoint {
+  nextCandidate(
+    endpoints: readonly ReliabilityEndpoint[],
+    previous?: ReliabilityEndpoint,
+  ): ReliabilityEndpoint {
     const healthy = endpoints.filter((endpoint) => this.isHealthy(endpoint.baseURL));
     const candidates = healthy.length > 0 ? healthy : endpoints;
-    return candidates[attempt % candidates.length]!;
+    if (previous === undefined) return candidates[0]!;
+    const start = candidates.findIndex((endpoint) => endpoint.baseURL === previous.baseURL);
+    const index = start < 0 ? 0 : (start + 1) % candidates.length;
+    return candidates[index]!;
   }
 
   /**
@@ -183,13 +196,15 @@ export async function* streamReliably(
   let attempts = 0;
   let yielded = false;
   let lastError: unknown;
+  let previous: ReliabilityEndpoint | undefined;
 
   while (attempts < maxAttempts) {
     if (signal?.aborted) {
       if (lastError !== undefined) throw lastError;
       throw new LlmError('llama.cpp request aborted by caller', 'ABORTED');
     }
-    const endpoint = pool.nextCandidate(endpoints, attempts);
+    const endpoint = pool.nextCandidate(endpoints, previous);
+    previous = endpoint;
     attempts++;
     const client = createClient(endpoint.baseURL, {
       streamIdleTimeoutMs,
@@ -219,7 +234,7 @@ export async function* streamReliably(
       );
       // Backoff applies when the next attempt retries the SAME endpoint;
       // falling back to a different candidate proceeds immediately.
-      const nextEndpoint = pool.nextCandidate(endpoints, attempts);
+      const nextEndpoint = pool.nextCandidate(endpoints, endpoint);
       if (nextEndpoint.baseURL === endpoint.baseURL && delayMs > 0) {
         await sleep(delayMs, signal);
       }
