@@ -65,14 +65,16 @@ describe('llm-llamacpp plugin registration', () => {
     expect(configurable[0]?.settingsPath).toEqual([]);
   });
 
-  it('reports the resolved retry policy through the public API', async () => {
+  it('falls back to the harness default retry policy without a provider policy', async () => {
+    // The reliability layer (issue #7) adds a provider-owned policy; until
+    // then the public API must still report the resolved normal defaults.
     const { ctx, llmScope } = newContext();
     await llmScope.await();
-    const scope = ctx.plugin(mountPlugin, { retryPolicy: { mode: 'always' } });
+    const scope = ctx.plugin(mountPlugin, {});
     await scope.await();
 
     const policy = ctx.llm.providerRetryPolicy(PROVIDER);
-    expect(policy.mode).toBe('always');
+    expect(policy.mode).toBe('normal');
   });
 
   it('publishes the configured model through listModels and resolveModelInfo', async () => {

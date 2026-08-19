@@ -1,11 +1,14 @@
 /**
  * Translate llama.cpp wire chunks into the Harness `StreamChunk` protocol.
- * One stateful harness block per content or reasoning delta; finish reason and
- * the latest usage are deferred to stream end so no chunk follows `finish`.
+ * One stateful harness block per text, reasoning, or tool-call delta;
+ * fragmented tool-call ids, function names, and JSON argument fragments are
+ * accumulated per wire `call.index`; finish reason and the latest usage are
+ * deferred to stream end so no chunk follows `finish`.
  *
  * @module llm-llamacpp/translate
  */
 import {
+  CallId,
   EMPTY_RESPONSE_CODE,
   LlmError,
   type FinishReason,
@@ -49,18 +52,30 @@ function mapUsage(usage: LlamaCppUsage): TokenUsage {
   };
 }
 
-interface OpenBlock {
-  readonly index: number;
-  readonly kind: 'text' | 'reasoning';
-  text: string;
-}
+/** One open harness block, closed at stream end. */
+type OpenBlock =
+  | { readonly index: number; readonly kind: 'text'; text: string }
+  | { readonly index: number; readonly kind: 'reasoning'; text: string }
+  | {
+      readonly index: number;
+      readonly kind: 'tool-call';
+      /** Accumulated provider-issued call id (may arrive in a later frame). */
+      callId?: string;
+      /** Accumulated function name (may arrive in a later frame). */
+      name?: string;
+      /** Accumulated raw JSON argument string. */
+      text: string;
+    };
+
+/** One open tool-call harness block. */
+type ToolCallOpenBlock = Extract<OpenBlock, { kind: 'tool-call' }>;
 
 /**
  * Consume parsed wire chunks and yield StreamChunks as they arrive; block-end,
  * usage, and finish are deferred to stream end. A `stop` (or absent) finish
  * with no opened blocks is a degenerate completion and maps to an
- * `EMPTY_RESPONSE` error finish. Streamed tool-call deltas are rejected
- * explicitly until issue #5 implements them.
+ * `EMPTY_RESPONSE` error finish. Tool-call argument strings must parse as JSON
+ * by stream end, otherwise the stream fails with `INVALID_TOOL_ARGUMENTS`.
  * @param chunks - parsed wire chunks from the client (already JSON-decoded).
  * @param options - `preserveThinking: false` consumes reasoning deltas without
  *   emitting reasoning blocks (the `preserveThinking` expert knob).
@@ -73,6 +88,7 @@ export async function* translate(
   let nextIndex = 0;
   let textBlock: OpenBlock | undefined;
   let reasoningBlock: OpenBlock | undefined;
+  const toolBlocks = new Map<number, ToolCallOpenBlock>();
   const order: OpenBlock[] = [];
   let pendingFinish: FinishReason | undefined;
   let pendingUsage: TokenUsage | undefined;
@@ -102,11 +118,29 @@ export async function* translate(
         textBlock.text += content;
         yield { type: 'text-delta', index: textBlock.index, text: content };
       }
-      if (delta.tool_calls !== undefined && delta.tool_calls.length > 0) {
-        throw new LlmError(
-          'llm-llamacpp: streamed tool calls are not supported yet (issue #5)',
-          'UNSUPPORTED_OPTION',
-        );
+      for (const call of delta.tool_calls ?? []) {
+        const wireIndex = call.index ?? 0;
+        let block = toolBlocks.get(wireIndex);
+        if (block === undefined) {
+          block = { index: nextIndex++, kind: 'tool-call', text: '' };
+          toolBlocks.set(wireIndex, block);
+          order.push(block);
+          yield { type: 'block-start', index: block.index, blockType: 'tool-call' };
+        }
+        if (call.id !== undefined) block.callId = call.id;
+        if (call.function?.name !== undefined) {
+          // Function names arrive as fragments like arguments: accumulate.
+          block.name = (block.name ?? '') + call.function.name;
+        }
+        const fragment = call.function?.arguments ?? '';
+        block.text += fragment;
+        yield {
+          type: 'tool-call-delta',
+          index: block.index,
+          id: CallId(block.callId ?? ''),
+          ...(block.name !== undefined ? { name: block.name } : {}),
+          argumentsDelta: fragment,
+        };
       }
       if (typeof choice.finish_reason === 'string') {
         pendingFinish = mapFinishReason(choice.finish_reason);
@@ -116,13 +150,34 @@ export async function* translate(
   }
 
   for (const block of order) {
-    yield {
-      type: 'block-end',
-      index: block.index,
-      block: block.kind === 'text'
-        ? { type: 'text', text: block.text }
-        : { type: 'reasoning', text: block.text },
-    };
+    if (block.kind === 'tool-call') {
+      try {
+        JSON.parse(block.text);
+      } catch {
+        throw new LlmError(
+          `llama.cpp streamed malformed tool arguments for "${block.name ?? ''}": ${block.text.slice(0, 120)}`,
+          'INVALID_TOOL_ARGUMENTS',
+        );
+      }
+      yield {
+        type: 'block-end',
+        index: block.index,
+        block: {
+          type: 'tool-call',
+          id: CallId(block.callId ?? ''),
+          name: block.name ?? '',
+          arguments: block.text,
+        },
+      };
+    } else {
+      yield {
+        type: 'block-end',
+        index: block.index,
+        block: block.kind === 'text'
+          ? { type: 'text', text: block.text }
+          : { type: 'reasoning', text: block.text },
+      };
+    }
   }
   if (pendingUsage !== undefined) yield { type: 'usage', usage: pendingUsage };
   const reason = pendingFinish ?? { kind: 'stop' };

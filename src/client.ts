@@ -55,7 +55,9 @@ export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 /**
  * Per-read idle watchdog: aborts the combined signal with a `TIMEOUT` LlmError
- * when no data (or SSE comment) arrives for `timeoutMs`, re-armed on activity.
+ * when no transport activity arrives for `timeoutMs`. It pulses on raw body
+ * bytes (before text/SSE parsing) and on SSE comments, so a long fragmented
+ * SSE event that keeps receiving bytes does not trip it.
  */
 class IdleWatchdog {
   readonly signal: AbortSignal;
@@ -173,11 +175,26 @@ export class LlamaCppClient {
   }
 
   private requestHeaders(): Record<string, string> {
+    // Reserved headers (attribution, transport, and the configured auth
+    // header) are owned by the client: user-supplied `headers` entries for
+    // them are stripped so they can never suppress the mandatory Harness
+    // attribution, break the content-type/accept contract, or spoof auth.
+    const reserved = new Set([
+      'content-type',
+      'accept',
+      'user-agent',
+      'authorization',
+      ...(this.auth !== undefined ? [this.auth.name] : []),
+    ]);
+    const user: Record<string, string> = {};
+    for (const [name, value] of Object.entries(this.headers)) {
+      if (!reserved.has(name.toLowerCase())) user[name] = value;
+    }
     return {
+      ...user,
       'content-type': 'application/json',
       accept: 'text/event-stream',
       ...attributionHeaders(),
-      ...this.headers,
       ...this.auth !== undefined ? { [this.auth.name]: this.auth.value } : {},
     };
   }
@@ -211,7 +228,10 @@ export class LlamaCppClient {
       if (response.body === null) {
         throw new LlmError('llama.cpp returned no response body', 'EMPTY_RESPONSE');
       }
-      for await (const payload of parseSse(response.body, () => watchdog.pulse())) {
+      for await (const payload of parseSse(response.body, {
+        onBytes: () => watchdog.pulse(),
+        onComment: () => watchdog.pulse(),
+      })) {
         watchdog.pulse();
         if (payload === SSE_DONE) break;
         yield this.parsePayload(payload);
@@ -259,12 +279,19 @@ export class LlamaCppClient {
         detail = parsed as { code?: string; type?: string; message?: string };
       }
     } catch {
-      // keep raw text for diagnostics below
+      // raw text is retained for the bounded fallback below
     }
     const status = response.status;
-    const message = detail?.message !== undefined
-      ? detail.message
-      : `llama.cpp API error (HTTP ${status})`;
+    let message: string;
+    if (detail?.message !== undefined) {
+      message = detail.message;
+    } else {
+      // Non-JSON bodies (nginx 502, HTML error pages, …) are surfaced, bounded.
+      const body = raw?.trim().slice(0, 200);
+      message = body !== undefined && body.length > 0
+        ? `llama.cpp API error (HTTP ${status}): ${body}`
+        : `llama.cpp API error (HTTP ${status})`;
+    }
     const retryAfter = providerRetryAfterMs(response.headers.get('retry-after'));
     const requestId = requestIdOf(response.headers);
     return new LlmError(message, httpErrorCode(status, detail), {
@@ -286,6 +313,14 @@ export class LlamaCppClient {
   }
 }
 
+/** Options for {@link parseSse}. */
+export interface ParseSseOptions {
+  /** Called for every raw byte chunk received, before text/SSE parsing. */
+  onBytes?: (chunk: Uint8Array) => void;
+  /** Called for every SSE comment encountered. */
+  onComment?: (comment: string) => void;
+}
+
 /**
  * Parse an SSE byte stream into data payloads incrementally. Yields each
  * event's `data` payload in arrival order, with `[DONE]` as the final value;
@@ -293,15 +328,24 @@ export class LlamaCppClient {
  * Malformed SSE framing is handled defensively by the parser: a malformed
  * frame is skipped as `onError` (default) rather than aborting the stream.
  * @param stream - raw SSE bytes; reads may split anywhere, including mid-UTF-8.
- * @param onComment - optional transport-activity callback for watchdog pulses.
+ * @param options - byte/comment activity callbacks (e.g. watchdog pulses).
  */
 export async function* parseSse(
   stream: ReadableStream<Uint8Array>,
-  onComment?: (comment: string) => void,
+  options: ParseSseOptions = {},
 ): AsyncIterable<string> {
-  const events = (stream as unknown as ReadableStream<BufferSource>)
-    .pipeThrough(new TextDecoderStream())
-    .pipeThrough(new EventSourceParserStream({ onComment }));
+  // Pulse on raw bytes BEFORE text decoding/SSE framing so a long fragmented
+  // event that keeps receiving bytes stays alive.
+  const bytePulse = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      options.onBytes?.(chunk);
+      controller.enqueue(chunk);
+    },
+  });
+  const events = stream
+    .pipeThrough(bytePulse)
+    .pipeThrough(new TextDecoderStream() as unknown as TransformStream<Uint8Array, string>)
+    .pipeThrough(new EventSourceParserStream({ onComment: options.onComment }));
   for await (const { data } of events) {
     yield data;
     if (data === SSE_DONE) return;

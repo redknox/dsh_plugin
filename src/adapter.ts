@@ -67,10 +67,6 @@ export class LlamacppAdapter extends LlmAdapter {
     return { id: provider, name: this.deps.options().providerName };
   }
 
-  override providerRetryPolicy(): ReturnType<LlmAdapter['providerRetryPolicy']> {
-    return this.deps.options().retryPolicy;
-  }
-
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const { model } = this.deps.options();
     return Promise.resolve([

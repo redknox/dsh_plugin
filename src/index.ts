@@ -16,7 +16,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { LlmError, assertUsableApiKey } from '@deepseek-ai/dsh-llm';
-import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
 import { LlamacppAdapter } from './adapter.ts';
 import {
   Config,
@@ -88,22 +88,15 @@ export function apply(ctx: Context, config: ConfigType): void {
 
   // Registration is disposed with this fiber (Cordis effect semantics), so
   // plugin unload unregisters the route and the directory entry automatically.
-  const registration = ctx.llm.registerAdapter([PROVIDER], adapter);
+  ctx.llm.registerAdapter([PROVIDER], adapter);
 
-  // The only registration-captured fact is the retry policy: re-register the
-  // route in place when it changes so providerRetryPolicy() stays current.
-  let registeredPolicy = options().retryPolicy;
-  const ensureRegistrationFacts = (): void => {
-    const policy = options().retryPolicy;
-    if (deepEqualJson(policy, registeredPolicy)) return;
-    registration.replace([PROVIDER]);
-    registeredPolicy = policy;
-  };
-
+  // The provider-owned retry policy is intentionally NOT captured here: retry
+  // and reliability behavior belong to issue #7, which re-adds the policy
+  // registration and in-place re-registration on change.
   installSettingsSection(ctx, NS, Config, config, {
     setSource: (source) => {
       current = source;
     },
-    onChange: ensureRegistrationFacts,
+    onChange: () => {},
   });
 }

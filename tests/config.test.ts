@@ -23,7 +23,7 @@ describe('resolveAdapterOptions', () => {
     expect(options.apiKeyHeader).toBe(DEFAULT_API_KEY_HEADER);
     expect(options.apiKeyEnv).toBeUndefined();
     expect(options.streamIdleTimeoutMs).toBe(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
-    expect(options.retryPolicy.mode).toBe('normal');
+    expect(options.reasoning).toMatchObject({ enabled: true, preset: 'medium', wire: 'chat-template-kwargs' });
   });
 
   it('passes through configured values', () => {
@@ -73,21 +73,5 @@ describe('resolveAdapterOptions', () => {
   it('omits an apiKeyEnv that is empty or whitespace', () => {
     expect(resolveAdapterOptions({ apiKeyEnv: '' }).apiKeyEnv).toBeUndefined();
     expect(resolveAdapterOptions({ apiKeyEnv: '   ' }).apiKeyEnv).toBeUndefined();
-  });
-
-  it('resolves an always retry policy', () => {
-    const options = resolveAdapterOptions({ retryPolicy: { mode: 'always' } });
-    expect(options.retryPolicy.mode).toBe('always');
-  });
-
-  it('resolves a normal retry policy with custom codes', () => {
-    const options = resolveAdapterOptions({
-      retryPolicy: { mode: 'normal', maxRetries: 3, retryableCodes: ['SERVER'] },
-    });
-    expect(options.retryPolicy.mode).toBe('normal');
-    if (options.retryPolicy.mode === 'normal') {
-      expect(options.retryPolicy.maxRetries).toBe(3);
-      expect(options.retryPolicy.retryableCodes).toEqual(['SERVER']);
-    }
   });
 });

@@ -13,12 +13,6 @@
  */
 import z from '@deepseek-ai/schemastery';
 import {
-  RetryPolicySchema,
-  resolveRetryPolicy,
-  type ResolvedRetryPolicy,
-  type RetryPolicyConfig,
-} from '@deepseek-ai/dsh-llm';
-import {
   validateReasoningConfig,
   type ReasoningExpertOverride,
   type ReasoningLevel,
@@ -83,8 +77,6 @@ export const Config = z.object({
   apiKeyHeader: z.string().default(DEFAULT_API_KEY_HEADER),
   /** Maximum idle interval (ms) for one outstanding provider stream read. */
   streamIdleTimeoutMs: z.number().min(1).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
-  /** Provider-owned request retry policy captured at registration. */
-  retryPolicy: RetryPolicySchema,
   /** Semantic Qwen reasoning controls (presets + expert overrides). */
   reasoning: ReasoningSchema,
 });
@@ -102,8 +94,6 @@ export type ConfigType = {
   apiKeyHeader?: string;
   /** Maximum idle interval (ms) for one outstanding provider stream read. */
   streamIdleTimeoutMs?: number;
-  /** Provider-owned request retry policy captured at registration. */
-  retryPolicy?: RetryPolicyConfig;
   /** Semantic Qwen reasoning controls. */
   reasoning?: {
     enabled?: boolean;
@@ -122,7 +112,6 @@ export interface ResolvedAdapterOptions {
   readonly apiKeyEnv?: string;
   readonly apiKeyHeader: string;
   readonly streamIdleTimeoutMs: number;
-  readonly retryPolicy: ResolvedRetryPolicy;
   readonly reasoning: ReasoningPolicyConfig;
 }
 
@@ -178,7 +167,6 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     ...apiKeyEnv !== undefined && apiKeyEnv.length > 0 ? { apiKeyEnv } : {},
     apiKeyHeader,
     streamIdleTimeoutMs,
-    retryPolicy: resolveRetryPolicy(config.retryPolicy as ConfigType['retryPolicy'], 'llm-llamacpp: retryPolicy'),
     reasoning,
   };
 }

@@ -120,20 +120,25 @@ export function serializeRequest(
   options: GenerateOptions,
   reasoning: ResolvedReasoningPolicy,
 ): LlamaCppChatCompletionRequest {
-  if (options.tools !== undefined && options.tools.length > 0) {
-    throw new LlmError(
-      'llm-llamacpp: tool schemas are not supported yet (issue #5)',
-      'UNSUPPORTED_OPTION',
-    );
-  }
   const messages: LlamaCppChatMessage[] = [];
   if (options.system !== undefined) messages.push({ role: 'system', content: options.system });
   messages.push(...serializeMessages(options.messages));
+  const tools = options.tools !== undefined && options.tools.length > 0
+    ? options.tools.map((tool) => ({
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      }))
+    : undefined;
   const request: LlamaCppChatCompletionRequest = {
     model: options.model,
     messages,
     stream: true,
     stream_options: { include_usage: true },
+    ...(tools !== undefined ? { tools } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
     ...(options.stop !== undefined ? { stop: options.stop } : {}),

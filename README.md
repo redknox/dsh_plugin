@@ -9,10 +9,11 @@ The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** Issues #1-#4 are implemented: scaffold + registration, the
-> llama.cpp streaming client, `LlmAdapter` message/stream translation, and
-> Qwen reasoning presets (`off`/`low`/`medium`/`xhigh`) with expert overrides.
-> Tool calling (#5), adaptive budgets (#6), and reliability (#7) land next.
+> **Status.** Issues #1-#5 are implemented: scaffold + registration, the
+> llama.cpp streaming client, `LlmAdapter` message/stream translation, Qwen
+> reasoning presets (`off`/`low`/`medium`/`xhigh`) with expert overrides, and
+> tool-call streaming/schema support. Adaptive budgets (#6) and reliability
+> (#7, including the provider-owned retry policy) land next.
 
 ## Requirements
 
@@ -43,11 +44,6 @@ Add an entry to the harness plugin list (e.g. `cordis.yml`):
     #     effort: medium
     #     budgetTokens: 4096
     #     preserveThinking: true
-    # retryPolicy:                  # optional; omission uses bounded normal defaults
-    #   mode: normal
-    #   maxRetries: 2
-    #   retryableCodes: [RATE_LIMIT, SERVER, TIMEOUT, TRANSPORT]
-    #   backoff: { initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 }
 ```
 
 The plugin registers provider route `llamacpp-local` and the configurable-provider

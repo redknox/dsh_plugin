@@ -103,6 +103,25 @@ describe('LlamaCppClient.chat', () => {
     expect(body.stream).toBe(true);
   });
 
+  it('never lets user headers suppress reserved attribution/transport headers', async () => {
+    stubFetch(sseResponse([`data: ${SSE_DONE}\n\n`]));
+    const client = new LlamaCppClient('http://127.0.0.1:8080', {
+      headers: {
+        'user-agent': 'evil-client/1.0',
+        accept: 'text/plain',
+        'content-type': 'text/html',
+        authorization: 'Bearer spoofed',
+      },
+    });
+    for await (const _chunk of client.chat({ model: 'qwen3', messages: [], stream: true })) void _chunk;
+
+    const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers['user-agent']).toMatch(/^deepseek-harness\//);
+    expect(headers.accept).toBe('text/event-stream');
+    expect(headers['content-type']).toBe('application/json');
+    expect(headers.authorization).toBeUndefined(); // no auth configured; spoof cannot sneak in
+  });
+
   it('yields the first chunk before the stream completes', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -178,6 +197,19 @@ describe('LlamaCppClient.chat', () => {
     expect(contextError.failure.status).toBe(400);
   });
 
+  it('surfaces a bounded non-JSON error body (e.g. nginx 502) in the message', async () => {
+    const html = '<html><body>Bad Gateway</body></html>'.repeat(50);
+    stubFetch(new Response(html, { status: 502, headers: { 'content-type': 'text/html' } }));
+    const client = new LlamaCppClient('http://127.0.0.1:8080');
+    const iterator = client.chat({ model: 'qwen3', messages: [], stream: true })[Symbol.asyncIterator]();
+    const error = await iterator.next().then(() => null, (e: unknown) => e) as LlmError;
+    expect(error.code).toBe('SERVER');
+    expect(error.message).toMatch(/HTTP 502/);
+    expect(error.message).toMatch(/Bad Gateway/);
+    // bounded: far shorter than the full repeated body
+    expect(error.message.length).toBeLessThan(html.length);
+  });
+
   it('rejects malformed SSE payloads with MALFORMED_RESPONSE', async () => {
     stubFetch(sseResponse(['data: {not json}\n\n', `data: ${SSE_DONE}\n\n`]));
     const client = new LlamaCppClient('http://127.0.0.1:8080');
@@ -224,6 +256,32 @@ describe('LlamaCppClient.chat', () => {
     const error = await iterator.next().then(() => null, (e: unknown) => e) as LlmError;
     expect(error.code).toBe('TIMEOUT');
     expect(error.message).toContain('stream idle timeout');
+  });
+
+  it('does not trip the idle watchdog while a fragmented SSE event keeps receiving bytes', async () => {
+    // One large SSE frame delivered in small byte chunks with gaps shorter
+    // than the timeout: the watchdog must pulse on raw bytes, not only on
+    // completed events, or it would abort before the frame terminates.
+    const frame = data(contentChunk('fragmented payload'));
+    const bytes = new TextEncoder().encode(frame);
+    const gapMs = 15;
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let i = 0; i < bytes.length; i += 10) {
+          controller.enqueue(bytes.slice(i, i + 10));
+          await new Promise((resolve) => setTimeout(resolve, gapMs));
+        }
+        controller.enqueue(new TextEncoder().encode(`data: ${SSE_DONE}\n\n`));
+        controller.close();
+      },
+    });
+    stubFetch(new Response(stream, { status: 200 }));
+    const client = new LlamaCppClient('http://127.0.0.1:8080', { streamIdleTimeoutMs: 60 });
+    const texts: string[] = [];
+    for await (const chunk of client.chat({ model: 'qwen3', messages: [], stream: true })) {
+      for (const choice of chunk.choices) if (choice.delta.content) texts.push(choice.delta.content);
+    }
+    expect(texts).toEqual(['fragmented payload']);
   });
 
   it('wraps network failures as TRANSPORT with cause', async () => {

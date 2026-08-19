@@ -191,14 +191,16 @@ describe('LlamacppAdapter request serialization', () => {
     expect(fakeChat).toHaveBeenCalledWith(expect.anything(), { signal: controller.signal });
   });
 
-  it('rejects tool schemas explicitly (issue #5)', async () => {
+  it('serializes tool schemas onto the wire (issue #5)', async () => {
     const { adapter, fakeChat } = harness({});
-    const { error } = await collect(adapter.stream({
+    await collect(adapter.stream({
       ...baseOptions,
       tools: [{ name: 'get_time', description: 'Get the time', parameters: { type: 'object' } }],
     }));
-    expect((error as LlmError).code).toBe('UNSUPPORTED_OPTION');
-    expect(fakeChat).not.toHaveBeenCalled();
+    const wire = fakeChat.mock.calls[0]?.[0] as LlamaCppChatCompletionRequest;
+    expect(wire.tools).toEqual([
+      { type: 'function', function: { name: 'get_time', description: 'Get the time', parameters: { type: 'object' } } },
+    ]);
   });
 
   it('rejects an unsupported reasoning effort explicitly', async () => {
@@ -337,14 +339,6 @@ describe('LlamacppAdapter stream translation', () => {
       { type: 'block-end', index: 0, block: { type: 'text', text: 'visible' } },
       { type: 'finish', reason: { kind: 'stop' } },
     ]);
-  });
-
-  it('rejects streamed tool-call deltas explicitly (issue #5)', async () => {
-    const { adapter } = harness({}, [
-      chunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'get_time', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] }),
-    ]);
-    const { error } = await collect(adapter.stream(baseOptions));
-    expect((error as LlmError).code).toBe('UNSUPPORTED_OPTION');
   });
 
   it('propagates client failures (caller cancellation -> ABORTED)', async () => {
