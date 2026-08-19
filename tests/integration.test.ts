@@ -99,14 +99,16 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
   });
 
   it('normalizes a server error into a terminal error finish', async () => {
-    fetchMock.mockResolvedValue(
+    // A fresh Response per attempt (a consumed body must not leak across
+    // reliability retries); maxRetries 0 keeps this test single-attempt.
+    fetchMock.mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ error: { message: 'model not loaded' } }), {
         status: 503,
         headers: { 'content-type': 'application/json' },
       }),
-    );
+    ));
     vi.stubGlobal('fetch', fetchMock);
-    const ctx = await mounted({});
+    const ctx = await mounted({ retryPolicy: { mode: 'normal', maxRetries: 0 } });
 
     const chunks: StreamChunk[] = [];
     for await (const chunk of ctx.llm.stream({

@@ -16,7 +16,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { LlmError, assertUsableApiKey } from '@deepseek-ai/dsh-llm';
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
+import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
 import { LlamacppAdapter } from './adapter.ts';
 import {
   Config,
@@ -88,11 +88,19 @@ export function apply(ctx: Context, config: ConfigType): void {
 
   // Registration is disposed with this fiber (Cordis effect semantics), so
   // plugin unload unregisters the route and the directory entry automatically.
-  ctx.llm.registerAdapter([PROVIDER], adapter);
+  const registration = ctx.llm.registerAdapter([PROVIDER], adapter);
 
-  // The provider-owned retry policy is intentionally NOT captured here: retry
-  // and reliability behavior belong to issue #7, which re-adds the policy
-  // registration and in-place re-registration on change.
+  // The one registration-captured fact is the retry policy (issue #7):
+  // re-register the route in place when it changes so providerRetryPolicy()
+  // stays current.
+  let registeredPolicy = options().retryPolicy;
+  const ensureRegistrationFacts = (): void => {
+    const policy = options().retryPolicy;
+    if (deepEqualJson(policy, registeredPolicy)) return;
+    registration.replace([PROVIDER]);
+    registeredPolicy = policy;
+  };
+
   installSettingsSection(ctx, NS, Config, config, {
     setSource: (source) => {
       // The settings scope hands back the schema-normalized shape, whose
@@ -100,6 +108,6 @@ export function apply(ctx: Context, config: ConfigType): void {
       // manual ConfigType mirror omits the null branch, so assert it.
       current = source as unknown as () => ConfigType;
     },
-    onChange: () => {},
+    onChange: ensureRegistrationFacts,
   });
 }

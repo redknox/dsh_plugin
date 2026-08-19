@@ -13,6 +13,12 @@
  */
 import z from '@deepseek-ai/schemastery';
 import {
+  RetryPolicySchema,
+  resolveRetryPolicy,
+  type ResolvedRetryPolicy,
+  type RetryPolicyConfig,
+} from '@deepseek-ai/dsh-llm';
+import {
   validateReasoningConfig,
   type ReasoningExpertOverride,
   type ReasoningLevel,
@@ -89,6 +95,19 @@ export const Config = z.object({
   apiKeyHeader: z.string().default(DEFAULT_API_KEY_HEADER),
   /** Maximum idle interval (ms) for one outstanding provider stream read. */
   streamIdleTimeoutMs: z.number().min(1).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+  /**
+   * Hard per-request-attempt timeout (ms), regardless of activity. Optional;
+   * absent means no total deadline (the idle watchdog still applies).
+   */
+  requestTimeoutMs: z.number().step(1).min(1),
+  /**
+   * Ordered list of llama.cpp endpoint base URLs for fallback (issue #7).
+   * When present it replaces `baseURL` as the candidate set; the first entry
+   * is the primary. Omission keeps single-endpoint behavior (just `baseURL`).
+   */
+  endpoints: z.array(z.string()),
+  /** Provider-owned retry policy (reliability layer, issue #7). */
+  retryPolicy: RetryPolicySchema,
   /** Semantic Qwen reasoning controls (presets + expert overrides). */
   reasoning: ReasoningSchema,
 });
@@ -106,6 +125,12 @@ export type ConfigType = {
   apiKeyHeader?: string;
   /** Maximum idle interval (ms) for one outstanding provider stream read. */
   streamIdleTimeoutMs?: number;
+  /** Hard per-request-attempt timeout (ms), regardless of activity. */
+  requestTimeoutMs?: number;
+  /** Ordered fallback endpoint list; replaces `baseURL` when present. */
+  endpoints?: string[];
+  /** Provider-owned retry policy (reliability layer, issue #7). */
+  retryPolicy?: RetryPolicyConfig;
   /** Semantic Qwen reasoning controls. */
   reasoning?: {
     enabled?: boolean;
@@ -125,12 +150,19 @@ export type ConfigType = {
 /** Validated, detached connection facts the adapter reads per operation. */
 export interface ResolvedAdapterOptions {
   readonly providerName: string;
+  /** Primary endpoint (first candidate). */
   readonly baseURL: string;
+  /** Ordered candidate endpoints (fallback order); `[baseURL]` when unset. */
+  readonly endpoints: readonly string[];
   readonly model: string;
   /** Environment variable naming the API key, when one is configured. */
   readonly apiKeyEnv?: string;
   readonly apiKeyHeader: string;
   readonly streamIdleTimeoutMs: number;
+  /** Hard per-request-attempt timeout (ms), when configured. */
+  readonly requestTimeoutMs?: number;
+  /** Provider-owned retry policy captured at registration. */
+  readonly retryPolicy: ResolvedRetryPolicy;
   readonly reasoning: ReasoningPolicyConfig;
 }
 
@@ -171,6 +203,22 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     throw new Error('llm-llamacpp: streamIdleTimeoutMs must be a positive finite number');
   }
   const apiKeyEnv = config.apiKeyEnv?.trim();
+  const requestTimeoutMs = config.requestTimeoutMs;
+  if (requestTimeoutMs !== undefined && (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0)) {
+    throw new Error('llm-llamacpp: requestTimeoutMs must be a positive safe integer');
+  }
+  // Ordered fallback candidate list; `endpoints` replaces `baseURL` when set.
+  const rawEndpoints = config.endpoints !== undefined && config.endpoints.length > 0
+    ? config.endpoints
+    : [baseURL];
+  const seen = new Set<string>();
+  const endpoints: string[] = [];
+  for (const raw of rawEndpoints) {
+    const url = validateBaseURL(raw);
+    if (seen.has(url)) continue;
+    seen.add(url);
+    endpoints.push(url);
+  }
   const reasoningRaw = config.reasoning ?? {};
   const adaptiveRaw = reasoningRaw.adaptive;
   const reasoning: ReasoningPolicyConfig = {
@@ -193,11 +241,14 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
   validateReasoningConfig(reasoning, 'llm-llamacpp: reasoning');
   return {
     providerName,
-    baseURL,
+    baseURL: endpoints[0] ?? baseURL,
+    endpoints,
     model,
     ...apiKeyEnv !== undefined && apiKeyEnv.length > 0 ? { apiKeyEnv } : {},
     apiKeyHeader,
     streamIdleTimeoutMs,
+    ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+    retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-llamacpp: retryPolicy'),
     reasoning,
   };
 }

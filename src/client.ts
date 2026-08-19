@@ -44,6 +44,11 @@ export interface LlamaCppRequestOptions {
 export interface LlamaCppClientOptions {
   /** Maximum idle interval (ms) for one outstanding provider read; default 300s. */
   readonly streamIdleTimeoutMs?: number;
+  /**
+   * Hard per-request-attempt timeout (ms), regardless of activity. Optional;
+   * absent means no total deadline (the idle watchdog still applies).
+   */
+  readonly requestTimeoutMs?: number;
   /** Optional auth header attached to every request. */
   readonly auth?: LlamaCppAuth;
   /** Additional lowercase header name → value pairs merged into every request. */
@@ -84,6 +89,30 @@ class IdleWatchdog {
   }
 
   /** Stop the watchdog and cancel any in-flight read. */
+  dispose(): void {
+    if (this.timer !== undefined) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.controller.abort();
+  }
+}
+
+/**
+ * One-shot hard deadline for an entire request attempt: aborts the combined
+ * signal with a `TIMEOUT` LlmError after `timeoutMs`, regardless of activity
+ * (unlike the idle watchdog, which re-arms on transport activity).
+ */
+class Deadline {
+  readonly signal: AbortSignal;
+  readonly reason: LlmError;
+  private readonly controller = new AbortController();
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(timeoutMs: number, message: string) {
+    this.reason = new LlmError(message, 'TIMEOUT');
+    this.signal = this.controller.signal;
+    this.timer = setTimeout(() => this.controller.abort(this.reason), timeoutMs);
+  }
+
   dispose(): void {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
@@ -162,6 +191,7 @@ export async function checkHealth(
  */
 export class LlamaCppClient {
   readonly streamIdleTimeoutMs: number;
+  readonly requestTimeoutMs?: number;
   readonly auth?: LlamaCppAuth;
   readonly headers: Readonly<Record<string, string>>;
 
@@ -170,6 +200,7 @@ export class LlamaCppClient {
     options: LlamaCppClientOptions = {},
   ) {
     this.streamIdleTimeoutMs = options.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    this.requestTimeoutMs = options.requestTimeoutMs;
     this.auth = options.auth;
     this.headers = options.headers ?? {};
   }
@@ -220,9 +251,16 @@ export class LlamaCppClient {
       this.streamIdleTimeoutMs,
       `llama.cpp stream idle timeout after ${this.streamIdleTimeoutMs}ms from ${this.baseURL}`,
     );
-    const signal = options.signal !== undefined
-      ? AbortSignal.any([options.signal, watchdog.signal])
-      : watchdog.signal;
+    const deadline = this.requestTimeoutMs !== undefined
+      ? new Deadline(
+          this.requestTimeoutMs,
+          `llama.cpp request timeout after ${this.requestTimeoutMs}ms from ${this.baseURL}`,
+        )
+      : undefined;
+    const signals: AbortSignal[] = [watchdog.signal];
+    if (options.signal !== undefined) signals.push(options.signal);
+    if (deadline !== undefined) signals.push(deadline.signal);
+    const signal = signals.length === 1 ? signals[0]! : AbortSignal.any(signals);
     try {
       const response = await this.post(request, signal);
       if (response.body === null) {
@@ -241,9 +279,11 @@ export class LlamaCppClient {
         throw new LlmError('llama.cpp request aborted by caller', 'ABORTED', { cause: error });
       }
       if (watchdog.signal.aborted) throw watchdog.reason;
+      if (deadline?.signal.aborted) throw deadline.reason;
       throw error;
     } finally {
       watchdog.dispose();
+      deadline?.dispose();
     }
   }
 

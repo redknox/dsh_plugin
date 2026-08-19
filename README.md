@@ -35,6 +35,15 @@ Add an entry to the harness plugin list (e.g. `cordis.yml`):
     # apiKeyEnv: LLAMACPP_API_KEY   # optional; set when a reverse proxy requires a key
     # apiKeyHeader: authorization   # 'authorization' sends 'Bearer <key>', anything else sends the raw key
     # streamIdleTimeoutMs: 300000
+    # requestTimeoutMs: 60000  # optional hard per-attempt timeout, regardless of activity
+    # endpoints:               # optional ordered fallback list; replaces baseURL
+    #   - http://127.0.0.1:8080
+    #   - http://10.0.0.2:8080
+    # retryPolicy:             # optional; omission uses bounded normal defaults
+    #   mode: normal           # normal | always
+    #   maxRetries: 2
+    #   retryableCodes: [RATE_LIMIT, SERVER, TIMEOUT, TRANSPORT, EMPTY_RESPONSE]
+    #   backoff: { initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 }
     # reasoning:                    # optional semantic Qwen reasoning controls
     #   enabled: true               # false advertises and allows only 'off'
     #   preset: medium              # off | low | medium | xhigh
@@ -161,6 +170,34 @@ LLAMACPP_BASE_URL=http://127.0.0.1:8081 node examples/tool-call.mjs
 The script streams a turn with `get_time` / `echo` tool schemas, executes the
 model's tool calls locally (standing in for `ctx.tools`), feeds the results
 back as `role: tool` messages, and streams a second turn.
+
+## Reliability (issue #7)
+
+Optional reliability layer for production/self-hosted deployments with
+multiple llama.cpp servers or transient failures. Kept separate from the
+adapter's translation logic; a single-server local deployment is unchanged.
+
+- **Ordered fallback**: `endpoints` lists candidate servers in fallback order
+  (first is primary). A failed primary falls back to the next candidate before
+  response streaming has begun; after that, candidates cycle.
+- **Retry policy**: only configured retryable codes are retried (default
+  `RATE_LIMIT`, `SERVER`, `TIMEOUT`, `TRANSPORT`, `EMPTY_RESPONSE`); `always`
+  mode retries every failure. Backoff is bounded exponential with symmetric
+  jitter.
+- **Cancellation**: an explicitly aborted request never retries or falls back.
+- **Never after output**: once user-visible streamed output has begun, any
+  later failure is fatal (no retry/fallback), unless behavior is explicitly
+  safe and documented.
+- **Health state/backoff**: repeatedly failing endpoints accrue exponential
+  backoff and are skipped as candidates until they recover; any success resets
+  them. State persists across requests per adapter instance.
+- **Timeouts**: `streamIdleTimeoutMs` (per-read idle, re-armed on activity)
+  and `requestTimeoutMs` (hard per-attempt deadline, regardless of activity).
+- **Structured logs**: failures log endpoint/model/attempt/code/backoff at
+  `warn` (`llm-llamacpp: endpoint … failed for model …`).
+- The provider-owned retry policy is registered with the harness
+  (`ctx.llm.providerRetryPolicy`) and re-registered in place when it changes,
+  so the built-in `dsh-llm-retry` step-level recovery uses the same policy.
 
 ## Development
 

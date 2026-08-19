@@ -74,4 +74,39 @@ describe('resolveAdapterOptions', () => {
     expect(resolveAdapterOptions({ apiKeyEnv: '' }).apiKeyEnv).toBeUndefined();
     expect(resolveAdapterOptions({ apiKeyEnv: '   ' }).apiKeyEnv).toBeUndefined();
   });
+
+  it('keeps a single endpoint when only baseURL is set (issue #7)', () => {
+    const options = resolveAdapterOptions({ baseURL: 'http://127.0.0.1:9999' });
+    expect(options.endpoints).toEqual(['http://127.0.0.1:9999']);
+    expect(options.baseURL).toBe('http://127.0.0.1:9999');
+  });
+
+  it('resolves ordered fallback endpoints and dedupes them (issue #7)', () => {
+    const options = resolveAdapterOptions({
+      endpoints: ['http://10.0.0.1:8080', 'http://10.0.0.2:8080', 'http://10.0.0.1:8080/'],
+    });
+    expect(options.endpoints).toEqual(['http://10.0.0.1:8080', 'http://10.0.0.2:8080']);
+    expect(options.baseURL).toBe('http://10.0.0.1:8080');
+  });
+
+  it('rejects an invalid fallback endpoint (issue #7)', () => {
+    expect(() => resolveAdapterOptions({ endpoints: ['not-a-url'] })).toThrow(/URL/);
+    expect(() => resolveAdapterOptions({ endpoints: ['ftp://x'] })).toThrow(/http or https/);
+  });
+
+  it('validates requestTimeoutMs (issue #7)', () => {
+    expect(resolveAdapterOptions({ requestTimeoutMs: 60_000 }).requestTimeoutMs).toBe(60_000);
+    expect(() => resolveAdapterOptions({ requestTimeoutMs: 0 })).toThrow(/requestTimeoutMs/);
+  });
+
+  it('resolves the provider-owned retry policy (issue #7)', () => {
+    const always = resolveAdapterOptions({ retryPolicy: { mode: 'always' } });
+    expect(always.retryPolicy.mode).toBe('always');
+    const normal = resolveAdapterOptions({ retryPolicy: { mode: 'normal', maxRetries: 3, retryableCodes: ['SERVER'] } });
+    expect(normal.retryPolicy.mode).toBe('normal');
+    if (normal.retryPolicy.mode === 'normal') {
+      expect(normal.retryPolicy.maxRetries).toBe(3);
+      expect(normal.retryPolicy.retryableCodes).toEqual(['SERVER']);
+    }
+  });
 });

@@ -258,6 +258,17 @@ describe('LlamaCppClient.chat', () => {
     expect(error.message).toContain('stream idle timeout');
   });
 
+  it('fails with TIMEOUT when the request deadline expires regardless of activity', async () => {
+    stubFetch((signal) => new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason));
+    }));
+    const client = new LlamaCppClient('http://127.0.0.1:8080', { requestTimeoutMs: 50 });
+    const iterator = client.chat({ model: 'qwen3', messages: [], stream: true })[Symbol.asyncIterator]();
+    const error = await iterator.next().then(() => null, (e: unknown) => e) as LlmError;
+    expect(error.code).toBe('TIMEOUT');
+    expect(error.message).toContain('request timeout');
+  });
+
   it('does not trip the idle watchdog while a fragmented SSE event keeps receiving bytes', async () => {
     // One large SSE frame delivered in small byte chunks with gaps shorter
     // than the timeout: the watchdog must pulse on raw bytes, not only on

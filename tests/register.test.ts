@@ -65,16 +65,14 @@ describe('llm-llamacpp plugin registration', () => {
     expect(configurable[0]?.settingsPath).toEqual([]);
   });
 
-  it('falls back to the harness default retry policy without a provider policy', async () => {
-    // The reliability layer (issue #7) adds a provider-owned policy; until
-    // then the public API must still report the resolved normal defaults.
+  it('reports the provider-owned retry policy through the public API (issue #7)', async () => {
     const { ctx, llmScope } = newContext();
     await llmScope.await();
-    const scope = ctx.plugin(mountPlugin, {});
+    const scope = ctx.plugin(mountPlugin, { retryPolicy: { mode: 'always' } });
     await scope.await();
 
     const policy = ctx.llm.providerRetryPolicy(PROVIDER);
-    expect(policy.mode).toBe('normal');
+    expect(policy.mode).toBe('always');
   });
 
   it('publishes the configured model through listModels and resolveModelInfo', async () => {
@@ -114,7 +112,9 @@ describe('llm-llamacpp plugin registration', () => {
   it('normalizes a transport failure into a terminal error finish', async () => {
     const { ctx, llmScope } = newContext();
     await llmScope.await();
-    const scope = ctx.plugin(mountPlugin, {});
+    // maxRetries 0 keeps this single-attempt (retry/backoff is covered by the
+    // reliability tests); a fresh fetch failure per attempt otherwise.
+    const scope = ctx.plugin(mountPlugin, { retryPolicy: { mode: 'normal', maxRetries: 0 } });
     await scope.await();
 
     // No llama.cpp server is running: the real client fails at the fetch, and

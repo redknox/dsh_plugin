@@ -31,6 +31,11 @@ import {
   reasoningEfforts,
   type ReasoningPolicyContext,
 } from './reasoning.ts';
+import {
+  EndpointPool,
+  streamReliably,
+  type ReliabilityEndpoint,
+} from './reliability.ts';
 import { serializeRequest } from './serialize.ts';
 import { translate } from './translate.ts';
 
@@ -42,9 +47,10 @@ export interface LlamaCppChatHandle {
   ): AsyncIterable<LlamaCppChatCompletionChunk>;
 }
 
-/** Minimal logger surface for adaptive-policy debug metadata. */
+/** Minimal logger surface for reliability/adaptive debug metadata. */
 export interface LlamacppLogger {
   debug(message: string): void;
+  warn?(message: string): void;
 }
 
 /** The adapter's dependency surface, injected by the registering plugin. */
@@ -95,14 +101,22 @@ function defaultCreateClient(baseURL: string, options: LlamaCppClientOptions): L
  */
 export class LlamacppAdapter extends LlmAdapter {
   readonly deps: LlamacppAdapterDeps;
+  /** Persistent endpoint health state across requests (reliability layer). */
+  readonly pool: EndpointPool;
 
   constructor(deps: LlamacppAdapterDeps) {
     super();
     this.deps = deps;
+    this.pool = new EndpointPool();
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
     return { id: provider, name: this.deps.options().providerName };
+  }
+
+  override providerRetryPolicy(provider: string): ReturnType<LlmAdapter['providerRetryPolicy']> {
+    void provider;
+    return this.deps.options().retryPolicy;
   }
 
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
@@ -132,10 +146,10 @@ export class LlamacppAdapter extends LlmAdapter {
   /**
    * Stream one model call. Each call resolves connection facts, the API key,
    * and the reasoning policy afresh (a changed base URL, key, or preset
-   * reaches the very next request), builds a fresh client for the resolved
-   * endpoint, and translates the wire stream. Thrown failures (client
-   * `LlmError`s included) are normalized by `LlmRuntime` into a terminal
-   * `finish` chunk.
+   * reaches the very next request) and drives the request through the
+   * reliability layer (ordered fallback + bounded retry/backoff; issue #7)
+   * before translating the wire stream. Thrown failures (client `LlmError`s
+   * included) are normalized by `LlmRuntime` into a terminal `finish` chunk.
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const opts = this.deps.options();
@@ -159,12 +173,21 @@ export class LlamacppAdapter extends LlmAdapter {
           value: opts.apiKeyHeader === 'authorization' ? `Bearer ${apiKey}` : apiKey,
         }
       : undefined;
-    const createClient = this.deps.createClient ?? defaultCreateClient;
-    const client = createClient(opts.baseURL, {
-      streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
+    const endpoints: readonly ReliabilityEndpoint[] = opts.endpoints.map((baseURL) => ({
+      baseURL,
       ...(auth !== undefined ? { auth } : {}),
-    });
-    yield* translate(client.chat(request, { signal: options.signal }), {
+    }));
+    const createClient = this.deps.createClient ?? defaultCreateClient;
+    yield* translate(streamReliably(request, {
+      endpoints,
+      retryPolicy: opts.retryPolicy,
+      streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
+      ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
+      createClient,
+      pool: this.pool,
+      logger: this.deps.logger,
+      signal: options.signal,
+    }), {
       emitReasoning: reasoning.emitThinking,
     });
   }
