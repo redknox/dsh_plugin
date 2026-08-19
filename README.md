@@ -9,11 +9,12 @@ The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** Issues #1 (scaffold + registration) and #2 (llama.cpp
-> OpenAI-compatible streaming client: POST/SSE/cancellation/idle timeout/typed
-> HTTP diagnostics/health probe) are implemented. The adapter translation,
-> tool calling, reasoning presets, adaptive budgets, and reliability land in
-> later issues; `stream()` still fails with `NOT_IMPLEMENTED` until #3.
+> **Status.** Issues #1 (scaffold + registration), #2 (llama.cpp
+> OpenAI-compatible streaming client), and #3 (`LlmAdapter` message and stream
+> translation: `GenerateOptions` → wire request, wire chunks → `StreamChunk`,
+> explicit rejection of tools/reasoning until #4/#5) are implemented. Tool
+> calling, reasoning presets, adaptive budgets, and reliability land in later
+> issues.
 
 ## Requirements
 
@@ -68,6 +69,8 @@ src/
 ├── index.ts        # Cordis plugin entrypoint (registration lifecycle)
 ├── adapter.ts      # Harness LlmAdapter implementation
 ├── client.ts       # llama.cpp HTTP/SSE transport client
+├── serialize.ts    # GenerateOptions -> llama.cpp wire request
+├── translate.ts    # llama.cpp wire chunks -> Harness StreamChunks
 ├── reasoning.ts    # Qwen reasoning policy/presets
 ├── protocol.ts     # llama.cpp request/response wire types
 └── config.ts       # plugin config schema and validation

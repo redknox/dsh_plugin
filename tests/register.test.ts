@@ -109,12 +109,14 @@ describe('llm-llamacpp plugin registration', () => {
     expect(ctx.llm.listConfigurableProviders()).toHaveLength(0);
   });
 
-  it('normalizes a placeholder stream() into a terminal error finish', async () => {
+  it('normalizes a transport failure into a terminal error finish', async () => {
     const { ctx, llmScope } = newContext();
     await llmScope.await();
     const scope = ctx.plugin(mountPlugin, {});
     await scope.await();
 
+    // No llama.cpp server is running: the real client fails at the fetch, and
+    // LlmRuntime must turn it into a terminal finish rather than a throw.
     const chunks: unknown[] = [];
     for await (const chunk of ctx.llm.stream({
       provider: PROVIDER,
@@ -127,6 +129,6 @@ describe('llm-llamacpp plugin registration', () => {
     const finish = chunks[0] as { type: string; reason: { kind: string; failure: { code: string } } };
     expect(finish.type).toBe('finish');
     expect(finish.reason.kind).toBe('error');
-    expect(finish.reason.failure.code).toBe('NOT_IMPLEMENTED');
+    expect(finish.reason.failure.code).toBe('TRANSPORT');
   });
 });

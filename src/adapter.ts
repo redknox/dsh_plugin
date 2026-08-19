@@ -2,27 +2,39 @@
  * The `LlmAdapter` implementation bridging DeepSeek Harness and the llama.cpp
  * transport client.
  *
- * The adapter owns Harness-specific translation only: `GenerateOptions` into
- * llama.cpp request bodies and llama.cpp streamed responses back into Harness
- * `StreamChunk` values. Transport stays in `client.ts`; reasoning policy stays
- * in `reasoning.ts`. No package-internal agent-loop code is imported.
- *
- * Implemented in issue #3. Until then `stream()` is a placeholder that fails
- * explicitly, so the scaffold is loadable and registered while nothing is
- * silently half-wired.
+ * The adapter owns Harness-specific orchestration only: resolve connection
+ * facts and credentials, serialize `GenerateOptions` into llama.cpp request
+ * bodies (`serialize.ts`), and translate streamed responses back into Harness
+ * `StreamChunk` values (`translate.ts`). Transport stays in `client.ts`;
+ * reasoning policy stays in `reasoning.ts`. No package-internal agent-loop code
+ * is imported; only the public `ctx.llm` contract is used.
  *
  * @module llm-llamacpp/adapter
  */
 import {
   LlmAdapter,
-  LlmError,
+  type GenerateOptions,
   type LlmModelInfo,
   type LlmProviderInfo,
   type LlmResolvedModelInfo,
-  type GenerateOptions,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm';
+import {
+  LlamaCppClient,
+  type LlamaCppClientOptions,
+} from './client.ts';
+import type { LlamaCppChatCompletionChunk, LlamaCppChatCompletionRequest } from './protocol.ts';
 import type { ResolvedAdapterOptions } from './config.ts';
+import { serializeRequest } from './serialize.ts';
+import { translate } from './translate.ts';
+
+/** The streaming surface an adapter needs from a transport client. */
+export interface LlamaCppChatHandle {
+  chat(
+    request: LlamaCppChatCompletionRequest,
+    options?: { signal?: AbortSignal },
+  ): AsyncIterable<LlamaCppChatCompletionChunk>;
+}
 
 /** The adapter's dependency surface, injected by the registering plugin. */
 export interface LlamacppAdapterDeps {
@@ -30,11 +42,17 @@ export interface LlamacppAdapterDeps {
   readonly options: () => ResolvedAdapterOptions;
   /** Per-request API key resolution; `undefined` means no auth header. */
   readonly resolveApiKey: () => Promise<string | undefined>;
+  /** Optional client factory for tests; defaults to a real `LlamaCppClient`. */
+  readonly createClient?: (baseURL: string, options: LlamaCppClientOptions) => LlamaCppChatHandle;
+}
+
+function defaultCreateClient(baseURL: string, options: LlamaCppClientOptions): LlamaCppChatHandle {
+  return new LlamaCppClient(baseURL, options);
 }
 
 /**
- * Placeholder adapter for the `llamacpp-local` provider route. One instance
- * serves every model name: the harness model id IS the wire model id.
+ * Adapter for the `llamacpp-local` provider route. One instance serves every
+ * model name: the harness model id IS the wire model id.
  */
 export class LlamacppAdapter extends LlmAdapter {
   readonly deps: LlamacppAdapterDeps;
@@ -73,10 +91,28 @@ export class LlamacppAdapter extends LlmAdapter {
     });
   }
 
-  override async *stream(_options: GenerateOptions): AsyncIterable<StreamChunk> {
-    throw new LlmError(
-      'llm-llamacpp: streaming not implemented yet (issue #2/#3)',
-      'NOT_IMPLEMENTED',
-    );
+  /**
+   * Stream one model call. Each call resolves connection facts and the API key
+   * afresh (a changed base URL or key reaches the very next request), builds a
+   * fresh client for the resolved endpoint, and translates the wire stream.
+   * Thrown failures (client `LlmError`s included) are normalized by
+   * `LlmRuntime` into a terminal `finish` chunk.
+   */
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const opts = this.deps.options();
+    const request = serializeRequest(options);
+    const apiKey = await this.deps.resolveApiKey();
+    const auth = apiKey !== undefined
+      ? {
+          name: opts.apiKeyHeader,
+          value: opts.apiKeyHeader === 'authorization' ? `Bearer ${apiKey}` : apiKey,
+        }
+      : undefined;
+    const createClient = this.deps.createClient ?? defaultCreateClient;
+    const client = createClient(opts.baseURL, {
+      streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
+      ...(auth !== undefined ? { auth } : {}),
+    });
+    yield* translate(client.chat(request, { signal: options.signal }));
   }
 }
