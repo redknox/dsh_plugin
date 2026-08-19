@@ -32,21 +32,25 @@ export type ReasoningWireMode = 'chat-template-kwargs' | 'reasoning-fields';
  * One semantic reasoning preset. `enabled` is the master thinking switch;
  * `effort` is the model semantic effort (a separate concept from the runtime
  * token budget); `budgetTokens` bounds runtime thinking tokens;
- * `preserveThinking` keeps thinking visible in the output.
+ * `preserveThinking` preserves historical thinking in the provider request
+ * (Qwen `chat_template_kwargs.preserve_thinking`) — a request/template
+ * behavior; `emitThinking` controls whether thinking is emitted as `reasoning`
+ * blocks in the Harness output stream — a purely output-visibility choice.
  */
 export interface ReasoningPreset {
   readonly enabled: boolean;
   readonly effort?: string;
   readonly budgetTokens?: number;
   readonly preserveThinking: boolean;
+  readonly emitThinking: boolean;
 }
 
 /** The built-in preset table. Values are starting points, not ceilings. */
 export const REASONING_PRESETS: Readonly<Record<ReasoningLevel, ReasoningPreset>> = {
-  off: { enabled: false, preserveThinking: false },
-  low: { enabled: true, effort: 'low', budgetTokens: 1_024, preserveThinking: true },
-  medium: { enabled: true, effort: 'medium', budgetTokens: 4_096, preserveThinking: true },
-  xhigh: { enabled: true, effort: 'xhigh', budgetTokens: 16_384, preserveThinking: true },
+  off: { enabled: false, preserveThinking: false, emitThinking: true },
+  low: { enabled: true, effort: 'low', budgetTokens: 1_024, preserveThinking: false, emitThinking: true },
+  medium: { enabled: true, effort: 'medium', budgetTokens: 4_096, preserveThinking: false, emitThinking: true },
+  xhigh: { enabled: true, effort: 'xhigh', budgetTokens: 16_384, preserveThinking: false, emitThinking: true },
 };
 
 export const REASONING_LEVELS: readonly ReasoningLevel[] = ['off', 'low', 'medium', 'xhigh'];
@@ -60,7 +64,10 @@ export interface ReasoningExpertOverride {
   readonly enabled?: boolean;
   readonly effort?: string;
   readonly budgetTokens?: number;
+  /** Provider-request behavior: preserve historical thinking (Qwen `preserve_thinking`). */
   readonly preserveThinking?: boolean;
+  /** Output behavior: emit `reasoning` blocks to the Harness stream (default true). */
+  readonly emitThinking?: boolean;
 }
 
 /** Plugin-level reasoning configuration (semantic, not wire-level). */
@@ -80,7 +87,10 @@ export interface ResolvedReasoningPolicy {
   readonly enabled: boolean;
   readonly effort?: string;
   readonly budgetTokens?: number;
+  /** Provider-request behavior: preserve historical thinking in the template. */
   readonly preserveThinking: boolean;
+  /** Output behavior: emit `reasoning` blocks to the Harness stream. */
+  readonly emitThinking: boolean;
   readonly wire: ReasoningWireMode;
 }
 
@@ -130,7 +140,7 @@ export function resolveReasoningPolicy(
   purpose?: 'compaction' | 'session-title',
 ): ResolvedReasoningPolicy {
   if (purpose === 'session-title') {
-    return { enabled: false, preserveThinking: false, wire: config.wire };
+    return { enabled: false, preserveThinking: false, emitThinking: true, wire: config.wire };
   }
   const level = effort !== undefined ? parseReasoningLevel(effort) : config.preset;
   if (!config.enabled && level !== 'off') {
@@ -145,6 +155,7 @@ export function resolveReasoningPolicy(
   const effortValue = expert?.effort ?? preset.effort;
   const budgetTokens = expert?.budgetTokens ?? preset.budgetTokens;
   const preserveThinking = expert?.preserveThinking ?? preset.preserveThinking;
+  const emitThinking = expert?.emitThinking ?? preset.emitThinking;
   if (!enabled && (effortValue !== undefined || budgetTokens !== undefined)) {
     throw new LlmError(
       'llm-llamacpp: expert override disables reasoning but sets effort/budgetTokens',
@@ -156,6 +167,7 @@ export function resolveReasoningPolicy(
     ...(effortValue !== undefined ? { effort: effortValue } : {}),
     ...(budgetTokens !== undefined ? { budgetTokens } : {}),
     preserveThinking,
+    emitThinking,
     wire: config.wire,
   };
 }

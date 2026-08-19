@@ -70,15 +70,24 @@ The resolved policy is translated to llama.cpp request fields only in the
 request builder, and the fields are version-dependent:
 
 - `wire: chat-template-kwargs` (default): `chat_template_kwargs = {
-  enable_thinking, thinking_budget }`. Honored by llama.cpp builds shipping
-  the per-request template-kwargs hook for Qwen3 templates (llama.cpp
-  PR #13196) across Qwen3-era versions. `off` sends `enable_thinking: false`.
+  enable_thinking, preserve_thinking? }` — Qwen chat-template kwargs honored
+  by llama.cpp builds with the per-request template-kwargs hook (llama.cpp
+  PR #13196). The runtime thinking budget is a separate inference control and
+  is sent as the top-level `thinking_budget_tokens` per-request field.
 - `wire: reasoning-fields`: top-level `reasoning_effort` (including `"none"`)
-  and `reasoning_budget_tokens`. Requires newer llama.cpp builds with native
+  and `thinking_budget_tokens`. Requires newer llama.cpp builds with native
   per-request reasoning support (PRs #22336 / #23116 / #26045).
+  `preserve_thinking` is a template concept and is only expressible in the
+  `chat-template-kwargs` mode.
 
-`preserveThinking: false` (expert) consumes thinking deltas without emitting
-`reasoning` blocks to the harness stream.
+Semantics of the expert knobs:
+
+- `preserveThinking` is a **request/template behavior** (Qwen
+  `chat_template_kwargs.preserve_thinking` — keep historical thinking in the
+  prompt), not an output switch.
+- `emitThinking` (default true) is the **output-visibility** knob: `false`
+  consumes thinking deltas without emitting `reasoning` blocks to the Harness
+  stream.
 
 ## Tools
 

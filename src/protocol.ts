@@ -71,14 +71,20 @@ export interface LlamaCppChatCompletionRequest {
   tools?: LlamaCppTool[];
   tool_choice?: 'auto' | 'none' | 'required';
   /**
-   * Qwen3 template kwargs (`enable_thinking`, `thinking_budget`) supported by
-   * llama.cpp builds that ship the `chat_template_kwargs` per-request hook.
+   * Qwen3 template kwargs (`enable_thinking`, `preserve_thinking`) supported
+   * by llama.cpp builds that ship the per-request template-kwargs hook. The
+   * runtime thinking budget is NOT a template kwarg; it travels as the
+   * top-level `thinking_budget_tokens` inference control below.
    */
   chat_template_kwargs?: Record<string, unknown>;
   /** Newer llama.cpp per-request reasoning effort, when the server supports it. */
   reasoning_effort?: string;
-  /** Newer llama.cpp per-request reasoning token budget, when supported. */
-  reasoning_budget_tokens?: number;
+  /**
+   * Per-request runtime thinking budget in tokens (llama.cpp OpenAI-compatible
+   * field; the server also accepts `reasoning_budget_tokens` as its newer
+   * alias, but `thinking_budget_tokens` is the broader-compatibility spelling).
+   */
+  thinking_budget_tokens?: number;
 }
 
 /** Token accounting reported by the server (non-streamed usage or trailing usage chunk). */

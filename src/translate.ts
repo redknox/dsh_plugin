@@ -77,14 +77,14 @@ type ToolCallOpenBlock = Extract<OpenBlock, { kind: 'tool-call' }>;
  * `EMPTY_RESPONSE` error finish. Tool-call argument strings must parse as JSON
  * by stream end, otherwise the stream fails with `INVALID_TOOL_ARGUMENTS`.
  * @param chunks - parsed wire chunks from the client (already JSON-decoded).
- * @param options - `preserveThinking: false` consumes reasoning deltas without
- *   emitting reasoning blocks (the `preserveThinking` expert knob).
+ * @param options - `emitReasoning: false` consumes reasoning deltas without
+ *   emitting reasoning blocks (the `emitThinking` output knob).
  */
 export async function* translate(
   chunks: AsyncIterable<LlamaCppChatCompletionChunk>,
-  options: { preserveThinking?: boolean } = {},
+  options: { emitReasoning?: boolean } = {},
 ): AsyncIterable<StreamChunk> {
-  const preserveThinking = options.preserveThinking ?? true;
+  const emitReasoning = options.emitReasoning ?? true;
   let nextIndex = 0;
   let textBlock: OpenBlock | undefined;
   let reasoningBlock: OpenBlock | undefined;
@@ -98,7 +98,7 @@ export async function* translate(
       const delta = choice.delta;
       const reasoning = delta.reasoning_content;
       if (typeof reasoning === 'string' && reasoning.length > 0) {
-        if (preserveThinking) {
+        if (emitReasoning) {
           if (reasoningBlock === undefined) {
             reasoningBlock = { index: nextIndex++, kind: 'reasoning', text: '' };
             order.push(reasoningBlock);

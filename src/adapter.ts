@@ -116,7 +116,7 @@ export class LlamacppAdapter extends LlmAdapter {
       ...(auth !== undefined ? { auth } : {}),
     });
     yield* translate(client.chat(request, { signal: options.signal }), {
-      preserveThinking: reasoning.preserveThinking,
+      emitReasoning: reasoning.emitThinking,
     });
   }
 }

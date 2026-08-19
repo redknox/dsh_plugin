@@ -134,33 +134,54 @@ describe('config validation', () => {
 });
 
 describe('wire translation', () => {
-  it('maps an enabled preset to enable_thinking + thinking_budget', () => {
-    expect(wire({ ...baseConfig, preset: 'medium' }).chat_template_kwargs).toEqual({ enable_thinking: true, thinking_budget: 4096 });
+  it('maps an enabled preset to enable_thinking template kwarg + thinking_budget_tokens', () => {
+    const request = wire({ ...baseConfig, preset: 'medium' });
+    expect(request.chat_template_kwargs).toEqual({ enable_thinking: true });
+    expect(request.thinking_budget_tokens).toBe(4096);
   });
 
-  it('maps off to enable_thinking: false and drops budget fields', () => {
+  it('maps off to enable_thinking: false with no stale budget/preserve fields', () => {
     const request = wire({ ...baseConfig, preset: 'off' });
     expect(request.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(request.thinking_budget_tokens).toBeUndefined();
     expect(request.reasoning_effort).toBeUndefined();
-    expect(request.reasoning_budget_tokens).toBeUndefined();
+  });
+
+  it('sends preserve_thinking template kwarg only when preserveThinking is set', () => {
+    const base = wire({ ...baseConfig, preset: 'medium' });
+    expect(base.chat_template_kwargs).toEqual({ enable_thinking: true });
+
+    const preserved = wire({ ...baseConfig, preset: 'medium', expert: { preserveThinking: true } });
+    expect(preserved.chat_template_kwargs).toEqual({ enable_thinking: true, preserve_thinking: true });
+    expect(preserved.thinking_budget_tokens).toBe(4096);
+
+    const notPreserved = wire({ ...baseConfig, preset: 'medium', expert: { preserveThinking: false } });
+    expect(notPreserved.chat_template_kwargs).toEqual({ enable_thinking: true });
+  });
+
+  it('sends an expert budgetTokens through the per-request thinking_budget_tokens field', () => {
+    const request = wire({ ...baseConfig, preset: 'medium', expert: { budgetTokens: 8192 } });
+    expect(request.thinking_budget_tokens).toBe(8192);
+    expect(request.chat_template_kwargs).toEqual({ enable_thinking: true });
   });
 
   it('keeps the preset budget when the expert override does not name one', () => {
     const request = wire({ ...baseConfig, expert: { enabled: true } });
-    expect(request.chat_template_kwargs).toEqual({ enable_thinking: true, thinking_budget: 4096 });
+    expect(request.chat_template_kwargs).toEqual({ enable_thinking: true });
+    expect(request.thinking_budget_tokens).toBe(4096);
   });
 
   it('uses native reasoning fields in reasoning-fields mode', () => {
     const request = wire({ ...baseConfig, wire: 'reasoning-fields', preset: 'xhigh' });
     expect(request.reasoning_effort).toBe('xhigh');
-    expect(request.reasoning_budget_tokens).toBe(16384);
+    expect(request.thinking_budget_tokens).toBe(16384);
     expect(request.chat_template_kwargs).toBeUndefined();
   });
 
   it('uses reasoning_effort: none for disabled reasoning in reasoning-fields mode', () => {
     const request = wire({ ...baseConfig, wire: 'reasoning-fields', preset: 'off' });
     expect(request.reasoning_effort).toBe('none');
-    expect(request.reasoning_budget_tokens).toBeUndefined();
+    expect(request.thinking_budget_tokens).toBeUndefined();
   });
 });
 

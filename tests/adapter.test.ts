@@ -243,7 +243,8 @@ describe('LlamacppAdapter request serialization', () => {
     const { adapter, fakeChat } = harness({});
     await collect(adapter.stream(baseOptions));
     const wire = fakeChat.mock.calls[0]?.[0] as LlamaCppChatCompletionRequest;
-    expect(wire.chat_template_kwargs).toEqual({ enable_thinking: true, thinking_budget: 4096 });
+    expect(wire.chat_template_kwargs).toEqual({ enable_thinking: true });
+    expect(wire.thinking_budget_tokens).toBe(4096);
   });
 
   it('honors an explicit per-request reasoning effort of off', async () => {
@@ -258,7 +259,7 @@ describe('LlamacppAdapter request serialization', () => {
     await collect(adapter.stream(baseOptions));
     const wire = fakeChat.mock.calls[0]?.[0] as LlamaCppChatCompletionRequest;
     expect(wire.reasoning_effort).toBe('xhigh');
-    expect(wire.reasoning_budget_tokens).toBe(16384);
+    expect(wire.thinking_budget_tokens).toBe(16384);
     expect(wire.chat_template_kwargs).toBeUndefined();
   });
 
@@ -355,8 +356,8 @@ describe('LlamacppAdapter stream translation', () => {
     ]);
   });
 
-  it('drops reasoning blocks when preserveThinking is disabled', async () => {
-    const { adapter } = harness({ reasoning: { expert: { preserveThinking: false } } }, [
+  it('drops reasoning blocks when emitThinking is disabled (output-only)', async () => {
+    const { adapter } = harness({ reasoning: { expert: { emitThinking: false } } }, [
       chunk({ choices: [{ index: 0, delta: { reasoning_content: 'hidden' }, finish_reason: null }] }),
       contentDelta('visible', 'stop'),
     ]);

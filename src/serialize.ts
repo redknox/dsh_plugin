@@ -121,19 +121,23 @@ export function serializeMessages(messages: readonly Message[]): LlamaCppChatMes
  * the only layer that maps semantic reasoning to wire fields.
  *
  * Version dependence: `chat_template_kwargs.enable_thinking` /
- * `chat_template_kwargs.thinking_budget` are honored by llama.cpp builds that
- * ship the per-request template-kwargs hook for Qwen3 templates (PR #13196),
- * across Qwen3-era versions; semantic `effort` has no template knob there, so
- * it maps to the token budget instead. Newer builds additionally honor
- * top-level `reasoning_effort` (including `"none"`) and
- * `reasoning_budget_tokens` (PRs #22336/#23116/#26045); select the
- * `reasoning-fields` wire mode on those builds.
+ * `chat_template_kwargs.preserve_thinking` are Qwen chat-template kwargs,
+ * honored by llama.cpp builds with the per-request template-kwargs hook
+ * (llama.cpp PR #13196). The runtime thinking budget is a separate llama.cpp
+ * inference control and travels as the top-level `thinking_budget_tokens`
+ * per-request field (the server's OpenAI-compatible spelling; newer builds
+ * also accept `reasoning_budget_tokens` as an alias, PRs #22336/#23116).
+ * Newer builds additionally honor `reasoning_effort` (including `"none"`,
+ * PR #26045); select the `reasoning-fields` wire mode on those builds.
  */
 function applyReasoningToRequest(request: LlamaCppChatCompletionRequest, policy: ResolvedReasoningPolicy): void {
   if (policy.wire === 'chat-template-kwargs') {
     request.chat_template_kwargs = policy.enabled
-      ? { enable_thinking: true, ...(policy.budgetTokens !== undefined ? { thinking_budget: policy.budgetTokens } : {}) }
+      ? { enable_thinking: true, ...(policy.preserveThinking ? { preserve_thinking: true } : {}) }
       : { enable_thinking: false };
+    if (policy.enabled && policy.budgetTokens !== undefined) {
+      request.thinking_budget_tokens = policy.budgetTokens;
+    }
     return;
   }
   // 'reasoning-fields' wire mode: native per-request reasoning fields.
@@ -142,7 +146,7 @@ function applyReasoningToRequest(request: LlamaCppChatCompletionRequest, policy:
     return;
   }
   if (policy.effort !== undefined) request.reasoning_effort = policy.effort;
-  if (policy.budgetTokens !== undefined) request.reasoning_budget_tokens = policy.budgetTokens;
+  if (policy.budgetTokens !== undefined) request.thinking_budget_tokens = policy.budgetTokens;
 }
 
 /**

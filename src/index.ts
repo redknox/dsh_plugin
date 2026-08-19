@@ -95,7 +95,10 @@ export function apply(ctx: Context, config: ConfigType): void {
   // registration and in-place re-registration on change.
   installSettingsSection(ctx, NS, Config, config, {
     setSource: (source) => {
-      current = source;
+      // The settings scope hands back the schema-normalized shape, whose
+      // optional fields the schemastery mapped type types as `| null`; our
+      // manual ConfigType mirror omits the null branch, so assert it.
+      current = source as unknown as () => ConfigType;
     },
     onChange: () => {},
   });
