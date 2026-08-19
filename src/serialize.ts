@@ -8,7 +8,12 @@
  *
  * @module llm-llamacpp/serialize
  */
-import { LlmError, type GenerateOptions, type Message } from '@deepseek-ai/dsh-llm';
+import {
+  LlmError,
+  contentHasImage,
+  type GenerateOptions,
+  type Message,
+} from '@deepseek-ai/dsh-llm';
 import type { ResolvedReasoningPolicy } from './reasoning.ts';
 import type {
   LlamaCppChatCompletionRequest,
@@ -22,6 +27,37 @@ function flattenText(blocks: Message['content']): string {
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('');
+}
+
+/**
+ * Reject content this text-only wire route cannot represent, before any
+ * flattening can silently erase it. Images (including inside tool results)
+ * fail via the public `contentHasImage` helper; unknown declaration-merged
+ * block types fail explicitly too, since they have no wire representation
+ * here. Reasoning, tool-call, and tool-result blocks are handled by the
+ * serializer itself and pass.
+ */
+function assertSupportedContent(blocks: readonly Message['content'][number][]): void {
+  if (contentHasImage(blocks)) {
+    throw new LlmError(
+      'llm-llamacpp: image content is not supported (text-only wire route)',
+      'UNSUPPORTED_CONTENT',
+    );
+  }
+  for (const block of blocks) {
+    switch (block.type) {
+      case 'text':
+      case 'reasoning':
+      case 'tool-call':
+      case 'tool-result':
+        break;
+      default:
+        throw new LlmError(
+          `llm-llamacpp: unsupported content block type "${block.type}"`,
+          'UNSUPPORTED_CONTENT',
+        );
+    }
+  }
 }
 
 /**
@@ -55,6 +91,7 @@ function serializeAssistant(content: Message['content']): LlamaCppChatMessage {
 export function serializeMessages(messages: readonly Message[]): LlamaCppChatMessage[] {
   const wire: LlamaCppChatMessage[] = [];
   for (const message of messages) {
+    assertSupportedContent(message.content);
     if (message.role === 'system') {
       wire.push({ role: 'system', content: flattenText(message.content) });
       continue;

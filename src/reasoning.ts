@@ -73,7 +73,28 @@ export interface ReasoningPolicyConfig {
   readonly expert?: ReasoningExpertOverride;
   /** Which llama.cpp wire translation to use (version-dependent). */
   readonly wire: ReasoningWireMode;
+  /** Optional adaptive budget adjustment (issue #6). */
+  readonly adaptive?: AdaptiveReasoningConfig;
 }
+
+/**
+ * Configurable adaptive-budget bounds. Adaptive mode adjusts the budget from
+ * request context within hard `minBudgetTokens`/`maxBudgetTokens` bounds; an
+ * explicit expert budget (or per-request effort) always wins over it.
+ */
+export interface AdaptiveReasoningConfig {
+  readonly enabled: boolean;
+  /** Hard lower bound for the adjusted budget; default 512. */
+  readonly minBudgetTokens?: number;
+  /** Hard upper bound for the adjusted budget; default 65536. */
+  readonly maxBudgetTokens?: number;
+  /** Configurable task/profile hints applied to every request, e.g. 'short' | 'deep' | 'precise'. */
+  readonly hints?: readonly string[];
+}
+
+/** Default adaptive safety bounds. */
+export const DEFAULT_ADAPTIVE_MIN_BUDGET = 512;
+export const DEFAULT_ADAPTIVE_MAX_BUDGET = 65_536;
 
 /** A fully resolved, still-semantic reasoning policy for one request. */
 export interface ResolvedReasoningPolicy {
@@ -82,6 +103,15 @@ export interface ResolvedReasoningPolicy {
   readonly budgetTokens?: number;
   readonly preserveThinking: boolean;
   readonly wire: ReasoningWireMode;
+}
+
+/**
+ * A resolved policy plus an optional human-readable explanation of why that
+ * budget/effort was chosen (the debug-metadata channel for adaptive decisions).
+ */
+export interface ReasoningDecision extends ResolvedReasoningPolicy {
+  /** Why this budget/effort was selected; present only when adaptive adjusted it. */
+  readonly reason?: string;
 }
 
 /** Parse a harness reasoning-effort id into a semantic level. */

@@ -203,6 +203,35 @@ describe('LlamacppAdapter request serialization', () => {
     ]);
   });
 
+  it('rejects image content explicitly instead of silently erasing it', async () => {
+    const { adapter, fakeChat } = harness({});
+    const imageMessage: Message = {
+      id: 'msg-img' as Message['id'],
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look at this: ' },
+        { type: 'image', attachment: { ref: 'attachment://img' } as never },
+      ],
+      source: { kind: 'user' },
+    };
+    const { error } = await collect(adapter.stream({ ...baseOptions, messages: [imageMessage] }));
+    expect((error as LlmError).code).toBe('UNSUPPORTED_CONTENT');
+    expect(fakeChat).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown content block types explicitly', async () => {
+    const { adapter, fakeChat } = harness({});
+    const oddMessage: Message = {
+      id: 'msg-odd' as Message['id'],
+      role: 'user',
+      content: [{ type: 'audio', whatever: true } as never],
+      source: { kind: 'user' },
+    };
+    const { error } = await collect(adapter.stream({ ...baseOptions, messages: [oddMessage] }));
+    expect((error as LlmError).code).toBe('UNSUPPORTED_CONTENT');
+    expect(fakeChat).not.toHaveBeenCalled();
+  });
+
   it('rejects an unsupported reasoning effort explicitly', async () => {
     const { adapter, fakeChat } = harness({});
     const { error } = await collect(adapter.stream({ ...baseOptions, reasoningEffort: 'high' as never }));
