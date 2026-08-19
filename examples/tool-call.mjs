@@ -27,6 +27,10 @@ import * as plugin from '../dist/index.js';
 
 const baseURL = process.env.LLAMACPP_BASE_URL ?? 'http://127.0.0.1:8080';
 const model = process.env.LLAMACPP_MODEL ?? 'qwen3';
+// Optional API key: name of an environment variable holding the key (e.g.
+// LLAMA_API_TOKEN for llama.cpp servers started with --api-key). The plugin
+// resolves it per request via apiKeyEnv.
+const apiKeyEnv = process.env.LLAMACPP_API_KEY_ENV ?? 'LLAMA_API_TOKEN';
 
 /** Trivial local tools, exactly as Harness would register them. */
 const tools = [
@@ -85,7 +89,7 @@ try {
   await llmScope.await();
   scope = ctx.plugin(
     { name: plugin.name, inject: plugin.inject, Config: plugin.Config, apply: plugin.apply },
-    { baseURL, model },
+    { baseURL, model, apiKeyEnv },
   );
   await scope.await();
 

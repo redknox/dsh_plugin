@@ -163,20 +163,23 @@ function requestIdOf(headers: Headers): ProviderRequestId | undefined {
 
 /**
  * Minimal connectivity probe against the llama.cpp server. Returns a boolean
- * and never throws, so it is safe to call from health surfaces.
+ * and never throws, so it is safe to call from health surfaces. Some servers
+ * require auth even on `/health`; pass `auth` when one is configured.
  * @param baseURL - the server base URL; `/health` is probed.
- * @param signal - optional caller cancellation.
- * @param timeoutMs - probe timeout in milliseconds (default 5s).
+ * @param options - optional caller cancellation, probe timeout, and auth.
  */
 export async function checkHealth(
   baseURL: string,
-  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  options: { signal?: AbortSignal; timeoutMs?: number; auth?: LlamaCppAuth } = {},
 ): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 5_000);
   const signal = options.signal !== undefined ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   try {
-    const response = await fetch(joinURL(baseURL, '/health'), { signal });
+    const response = await fetch(joinURL(baseURL, '/health'), {
+      signal,
+      ...(options.auth !== undefined ? { headers: { [options.auth.name]: options.auth.value } } : {}),
+    });
     return response.ok;
   } catch {
     return false;

@@ -323,6 +323,14 @@ describe('checkHealth', () => {
     });
     await expect(checkHealth('http://127.0.0.1:8080')).resolves.toBe(false);
   });
+
+  it('attaches auth to the health probe when provided', async () => {
+    stubFetch(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }));
+    await expect(checkHealth('http://127.0.0.1:8080', { auth: { name: 'authorization', value: 'Bearer sekrit' } })).resolves.toBe(true);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer sekrit');
+  });
 });
 
 describe('error mapping helpers', () => {
