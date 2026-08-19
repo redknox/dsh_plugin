@@ -9,9 +9,11 @@ The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** This is the issue #1 scaffold: the package builds, loads, and
-> registers the provider route. Streaming, tool calling, reasoning presets,
-> adaptive budgets, and reliability are implemented in later issues.
+> **Status.** Issues #1 (scaffold + registration) and #2 (llama.cpp
+> OpenAI-compatible streaming client: POST/SSE/cancellation/idle timeout/typed
+> HTTP diagnostics/health probe) are implemented. The adapter translation,
+> tool calling, reasoning presets, adaptive budgets, and reliability land in
+> later issues; `stream()` still fails with `NOT_IMPLEMENTED` until #3.
 
 ## Requirements
 
