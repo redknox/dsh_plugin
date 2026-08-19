@@ -90,6 +90,44 @@ Semantics of the expert knobs:
   consumes thinking deltas without emitting `reasoning` blocks to the Harness
   stream.
 
+### Adaptive reasoning budget (issue #6)
+
+Optional: adjust the preset budget from request context instead of using only
+static presets. Enable it under `reasoning.adaptive`:
+
+```yaml
+reasoning:
+  preset: medium
+  adaptive:
+    enabled: true
+    minBudgetTokens: 512        # optional hard lower bound
+    maxBudgetTokens: 65536      # optional hard upper bound
+    hints: [deep]               # optional task/profile hints: short | deep | precise
+```
+
+Policy inputs: message count and estimated prompt size (adapter-side ~4
+chars/token approximation), whether tools are offered, whether the turn
+follows a tool result, and the configured hints. The adjustment is a pure,
+deterministic function of these inputs (tested), clamped to the hard bounds.
+
+**Precedence (explicit and tested):**
+
+```text
+explicit per-request effort
+        ↓
+selected preset (with expert overrides)
+        ↓
+adaptive adjustment        (only when the budget came from the preset;
+                            an explicit expert budgetTokens always wins)
+        ↓
+provider defaults / safety bounds (min/max clamp)
+```
+
+The selected effort and budget are emitted as a `debug` log line per request
+(`llm-llamacpp reasoning decision: …`), so the choice is always inspectable.
+Adaptive mode can be enabled/disabled without touching adapter code; with it
+off, static preset resolution from #4 behaves exactly as before.
+
 ## Tools
 
 Harness tool schemas (`GenerateOptions.tools`) are sent to llama.cpp as

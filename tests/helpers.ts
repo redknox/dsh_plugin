@@ -60,7 +60,11 @@ export interface HarnessResult {
 }
 
 /** Build an adapter whose transport client is a recording fake. */
-export function harness(config: Record<string, unknown> = {}, chunks?: ChunkSource): HarnessResult {
+export function harness(
+  config: Record<string, unknown> = {},
+  chunks?: ChunkSource,
+  logger?: { debug: (message: string) => void },
+): HarnessResult {
   const options = () => resolveAdapterOptions(config) as ResolvedAdapterOptions;
   const fakeChat = vi.fn().mockImplementation(() => toAsync(typeof chunks === 'function' ? chunks() : (chunks ?? [])));
   const fakeClient: LlamaCppChatHandle = { chat: fakeChat };
@@ -74,7 +78,12 @@ export function harness(config: Record<string, unknown> = {}, chunks?: ChunkSour
     if (opts.apiKeyEnv === undefined) return undefined;
     return process.env[opts.apiKeyEnv];
   };
-  const adapter = new LlamacppAdapter({ options, resolveApiKey, createClient });
+  const adapter = new LlamacppAdapter({
+    options,
+    resolveApiKey,
+    createClient,
+    ...(logger !== undefined ? { logger } : {}),
+  });
   return { adapter, fakeChat, createClient, calls };
 }
 

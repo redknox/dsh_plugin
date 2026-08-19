@@ -41,6 +41,15 @@ const ReasoningExpertSchema = z.object({
   effort: z.string(),
   budgetTokens: z.number().step(1).min(1),
   preserveThinking: z.boolean(),
+  emitThinking: z.boolean(),
+});
+
+/** Adaptive budget bounds and hints (issue #6). */
+const AdaptiveSchema = z.object({
+  enabled: z.boolean().default(false),
+  minBudgetTokens: z.number().step(1).min(1),
+  maxBudgetTokens: z.number().step(1).min(1),
+  hints: z.array(z.string()),
 });
 
 /** Semantic reasoning configuration; wire translation happens in serialize.ts. */
@@ -53,6 +62,8 @@ const ReasoningSchema = z.object({
   expert: ReasoningExpertSchema,
   /** llama.cpp wire translation mode (version-dependent; documented in serialize.ts). */
   wire: z.union(['chat-template-kwargs', 'reasoning-fields']).default('chat-template-kwargs'),
+  /** Optional adaptive budget adjustment from request context. */
+  adaptive: AdaptiveSchema,
 });
 
 /**
@@ -100,6 +111,12 @@ export type ConfigType = {
     preset?: ReasoningLevel;
     expert?: ReasoningExpertOverride;
     wire?: ReasoningWireMode;
+    adaptive?: {
+      enabled?: boolean;
+      minBudgetTokens?: number;
+      maxBudgetTokens?: number;
+      hints?: string[];
+    };
   };
 };
 
@@ -153,11 +170,22 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
   }
   const apiKeyEnv = config.apiKeyEnv?.trim();
   const reasoningRaw = config.reasoning ?? {};
+  const adaptiveRaw = reasoningRaw.adaptive;
   const reasoning: ReasoningPolicyConfig = {
     enabled: reasoningRaw.enabled ?? true,
     preset: reasoningRaw.preset ?? 'medium',
     ...(reasoningRaw.expert !== undefined ? { expert: reasoningRaw.expert } : {}),
     wire: reasoningRaw.wire ?? 'chat-template-kwargs',
+    ...(adaptiveRaw !== undefined
+      ? {
+          adaptive: {
+            enabled: adaptiveRaw.enabled ?? false,
+            ...(adaptiveRaw.minBudgetTokens !== undefined ? { minBudgetTokens: adaptiveRaw.minBudgetTokens } : {}),
+            ...(adaptiveRaw.maxBudgetTokens !== undefined ? { maxBudgetTokens: adaptiveRaw.maxBudgetTokens } : {}),
+            ...(adaptiveRaw.hints !== undefined && adaptiveRaw.hints.length > 0 ? { hints: adaptiveRaw.hints } : {}),
+          },
+        }
+      : {}),
   };
   validateReasoningConfig(reasoning, 'llm-llamacpp: reasoning');
   return {

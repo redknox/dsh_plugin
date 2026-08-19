@@ -17,6 +17,7 @@ import {
   type LlmModelInfo,
   type LlmProviderInfo,
   type LlmResolvedModelInfo,
+  type Message,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm';
 import {
@@ -25,7 +26,11 @@ import {
 } from './client.ts';
 import type { LlamaCppChatCompletionChunk, LlamaCppChatCompletionRequest } from './protocol.ts';
 import type { ResolvedAdapterOptions } from './config.ts';
-import { resolveReasoningPolicy, reasoningEfforts } from './reasoning.ts';
+import {
+  resolveReasoningPolicy,
+  reasoningEfforts,
+  type ReasoningPolicyContext,
+} from './reasoning.ts';
 import { serializeRequest } from './serialize.ts';
 import { translate } from './translate.ts';
 
@@ -37,6 +42,11 @@ export interface LlamaCppChatHandle {
   ): AsyncIterable<LlamaCppChatCompletionChunk>;
 }
 
+/** Minimal logger surface for adaptive-policy debug metadata. */
+export interface LlamacppLogger {
+  debug(message: string): void;
+}
+
 /** The adapter's dependency surface, injected by the registering plugin. */
 export interface LlamacppAdapterDeps {
   /** Per-operation re-read of validated connection facts. */
@@ -45,6 +55,34 @@ export interface LlamacppAdapterDeps {
   readonly resolveApiKey: () => Promise<string | undefined>;
   /** Optional client factory for tests; defaults to a real `LlamaCppClient`. */
   readonly createClient?: (baseURL: string, options: LlamaCppClientOptions) => LlamaCppChatHandle;
+  /** Optional debug logger (e.g. the plugin's `ctx.logger`) for policy decisions. */
+  readonly logger?: LlamacppLogger;
+}
+
+/** Rough prompt-size estimate in tokens (~4 chars/token) for policy context. */
+function estimatePromptTokens(system: string | undefined, messages: readonly Message[]): number {
+  let chars = system?.length ?? 0;
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === 'text') chars += block.text.length;
+    }
+  }
+  return Math.floor(chars / 4);
+}
+
+/** Extract the adaptive policy context from one request (issue #6). */
+function policyContext(
+  options: GenerateOptions,
+  hints: readonly string[] | undefined,
+): ReasoningPolicyContext {
+  const last = options.messages.at(-1);
+  return {
+    messages: options.messages.length,
+    estimatedPromptTokens: estimatePromptTokens(options.system, options.messages),
+    toolsAvailable: (options.tools?.length ?? 0) > 0,
+    followsToolResult: last !== undefined && last.content.some((block) => block.type === 'tool-result'),
+    ...(hints !== undefined && hints.length > 0 ? { hints } : {}),
+  };
 }
 
 function defaultCreateClient(baseURL: string, options: LlamaCppClientOptions): LlamaCppChatHandle {
@@ -101,7 +139,12 @@ export class LlamacppAdapter extends LlmAdapter {
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const opts = this.deps.options();
-    const reasoning = resolveReasoningPolicy(options.reasoningEffort, opts.reasoning, options.purpose);
+    const context = policyContext(options, opts.reasoning.adaptive?.hints);
+    const reasoning = resolveReasoningPolicy(options.reasoningEffort, opts.reasoning, options.purpose, context);
+    this.deps.logger?.debug(
+      `llm-llamacpp reasoning decision: ${reasoning.reason ?? 'static preset'} ` +
+        `(enabled=${reasoning.enabled}, effort=${reasoning.effort ?? '-'}, budget=${reasoning.budgetTokens ?? '-'})`,
+    );
     const request = serializeRequest(options, reasoning);
     const apiKey = await this.deps.resolveApiKey();
     const auth = apiKey !== undefined

@@ -75,7 +75,7 @@ export function apply(ctx: Context, config: ConfigType): void {
     return assertUsableApiKey(raw, PLUGIN_NAME, opts.apiKeyEnv);
   };
 
-  const adapter = new LlamacppAdapter({ options, resolveApiKey });
+  const adapter = new LlamacppAdapter({ options, resolveApiKey, logger: ctx.logger });
 
   ctx.llm.registerConfigurableProviders([
     {
