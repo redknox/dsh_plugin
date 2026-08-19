@@ -80,6 +80,30 @@ request builder, and the fields are version-dependent:
 `preserveThinking: false` (expert) consumes thinking deltas without emitting
 `reasoning` blocks to the harness stream.
 
+## Tools
+
+Harness tool schemas (`GenerateOptions.tools`) are sent to llama.cpp as
+OpenAI-compatible `tools`, and streamed `tool_calls` deltas (fragmented ids,
+function names, and JSON argument fragments, multiple calls per response,
+mixed text+tool output) are reconstructed into Harness tool-call blocks.
+Malformed or empty argument JSON fails the stream with `INVALID_TOOL_ARGUMENTS`.
+Tool execution stays with Harness `ctx.tools`; this provider only translates
+the protocol.
+
+### End-to-end example
+
+With a running llama.cpp server and a tool-capable Qwen model:
+
+```bash
+npm run build
+node examples/tool-call.mjs                       # defaults to http://127.0.0.1:8080, model qwen3
+LLAMACPP_BASE_URL=http://127.0.0.1:8081 node examples/tool-call.mjs
+```
+
+The script streams a turn with `get_time` / `echo` tool schemas, executes the
+model's tool calls locally (standing in for `ctx.tools`), feeds the results
+back as `role: tool` messages, and streams a second turn.
+
 ## Development
 
 ```bash
