@@ -77,8 +77,9 @@ request builder, and the fields are version-dependent:
 - `wire: reasoning-fields`: top-level `reasoning_effort` (including `"none"`)
   and `thinking_budget_tokens`. Requires newer llama.cpp builds with native
   per-request reasoning support (PRs #22336 / #23116 / #26045).
-  `preserve_thinking` is a template concept and is only expressible in the
-  `chat-template-kwargs` mode.
+  `preserve_thinking` is a chat-template kwarg that llama.cpp merges
+  independently of the native fields, so it rides alongside them in either
+  wire mode.
 
 Semantics of the expert knobs:
 

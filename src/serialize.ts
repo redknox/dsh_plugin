@@ -129,6 +129,8 @@ export function serializeMessages(messages: readonly Message[]): LlamaCppChatMes
  * also accept `reasoning_budget_tokens` as an alias, PRs #22336/#23116).
  * Newer builds additionally honor `reasoning_effort` (including `"none"`,
  * PR #26045); select the `reasoning-fields` wire mode on those builds.
+ * `preserve_thinking` is merged from `chat_template_kwargs` independently of
+ * those native fields, so it can ride alongside them in either mode.
  */
 function applyReasoningToRequest(request: LlamaCppChatCompletionRequest, policy: ResolvedReasoningPolicy): void {
   if (policy.wire === 'chat-template-kwargs') {
@@ -147,6 +149,12 @@ function applyReasoningToRequest(request: LlamaCppChatCompletionRequest, policy:
   }
   if (policy.effort !== undefined) request.reasoning_effort = policy.effort;
   if (policy.budgetTokens !== undefined) request.thinking_budget_tokens = policy.budgetTokens;
+  // `preserve_thinking` is a Qwen chat-template kwarg that llama.cpp merges
+  // from `chat_template_kwargs` independently of the native reasoning fields,
+  // so the expert knob can never be a silent no-op in this mode either.
+  if (policy.preserveThinking) {
+    request.chat_template_kwargs = { preserve_thinking: true };
+  }
 }
 
 /**

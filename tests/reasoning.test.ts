@@ -178,6 +178,30 @@ describe('wire translation', () => {
     expect(request.chat_template_kwargs).toBeUndefined();
   });
 
+  it('sends preserve_thinking alongside native fields in reasoning-fields mode', () => {
+    const request = wire({
+      ...baseConfig,
+      wire: 'reasoning-fields',
+      preset: 'xhigh',
+      expert: { preserveThinking: true },
+    });
+    expect(request.chat_template_kwargs).toEqual({ preserve_thinking: true });
+    expect(request.reasoning_effort).toBe('xhigh');
+    expect(request.thinking_budget_tokens).toBe(16384);
+  });
+
+  it('never leaves preserve_thinking on the request when reasoning is off', () => {
+    const request = wire({
+      ...baseConfig,
+      wire: 'reasoning-fields',
+      preset: 'off',
+      expert: { preserveThinking: true },
+    });
+    expect(request.reasoning_effort).toBe('none');
+    expect(request.chat_template_kwargs).toBeUndefined();
+    expect(request.thinking_budget_tokens).toBeUndefined();
+  });
+
   it('uses reasoning_effort: none for disabled reasoning in reasoning-fields mode', () => {
     const request = wire({ ...baseConfig, wire: 'reasoning-fields', preset: 'off' });
     expect(request.reasoning_effort).toBe('none');
