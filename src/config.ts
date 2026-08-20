@@ -84,8 +84,8 @@ const ReasoningSchema = z.object({
   preset: z.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
   /** Explicit expert override surface; never rewrites the preset table. */
   expert: ReasoningExpertSchema,
-  /** llama.cpp wire translation mode (version-dependent; documented in serialize.ts). */
-  wire: z.union(['chat-template-kwargs', 'reasoning-fields']).default('chat-template-kwargs'),
+  /** llama.cpp wire translation mode; `none` sends no reasoning wire fields (issue #18). */
+  wire: z.union(['chat-template-kwargs', 'reasoning-fields', 'none']).default('none'),
   /** Optional adaptive budget adjustment from request context. */
   adaptive: AdaptiveSchema,
   /** Optional feedback-informed budget adjustment (issue #11). */

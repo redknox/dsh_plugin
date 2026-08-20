@@ -192,6 +192,7 @@ describe('adapter feedback loop integration', () => {
 
   it('records a success with reasoning near the budget and raises the next request', async () => {
     const options = resolveAdapterOptions({
+      modelFamily: 'qwen',
       baseURL: 'http://127.0.0.1:8080',
       reasoning: { preset: 'medium', feedback: { enabled: true } },
     });
@@ -211,7 +212,8 @@ describe('adapter feedback loop integration', () => {
   });
 
   it('does not record outcomes when feedback is disabled', async () => {
-    const options = resolveAdapterOptions({ baseURL: 'http://127.0.0.1:8080' });
+    const options = resolveAdapterOptions({
+      modelFamily: 'qwen', baseURL: 'http://127.0.0.1:8080' });
     const requests: LlamaCppChatCompletionRequest[] = [];
     const adapter = new LlamacppAdapter({
       options: () => options,
@@ -224,6 +226,7 @@ describe('adapter feedback loop integration', () => {
 
   it('omits the unobservable toolCallRetried field from adapter feedback (review regression)', async () => {
     const options = resolveAdapterOptions({
+      modelFamily: 'qwen',
       baseURL: 'http://127.0.0.1:8080',
       reasoning: { preset: 'medium', feedback: { enabled: true } },
     });
@@ -250,6 +253,7 @@ describe('adapter feedback loop integration', () => {
     const history = new FeedbackHistory();
     for (let i = 0; i < 10; i += 1) history.record(feedback({ outcome: 'timeout' }));
     const options = resolveAdapterOptions({
+      modelFamily: 'qwen',
       baseURL: 'http://127.0.0.1:8080',
       reasoning: { preset: 'medium', feedback: { enabled: true } },
     });

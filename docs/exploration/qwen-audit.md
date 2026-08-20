@@ -55,18 +55,26 @@ Harness reasoning semantics
 llama.cpp provider capability/wire layer
         ↓
 model-family compatibility profile        ← ModelFamilyProfile
-        ├── Qwen        (validated; supportsThinkingKwargs: true)
-        └── unknown     (default; inherits nothing Qwen-specific)
+        ├── Qwen        (validated; supportsThinkingKwargs: true → wire default
+        │                chat-template-kwargs)
+        └── unknown     (default; supportsThinkingKwargs: undefined → wire
+                         default 'none' — no Qwen kwargs sent)
 ```
 
 - `familyProfileFor(id)` — explicit selector (`'auto' | 'qwen'`); `'auto'`
   and anything unrecognized → `UNKNOWN_PROFILE`.
-- `UNKNOWN_PROFILE.reasoning.supportsThinkingKwargs` is **undefined**
-  (unknown), never assumed true.
-- `defaultReasoningWire(profile)` — the family's default wire mode; explicit
-  `reasoning.wire` always wins (resolved in `resolveAdapterOptions`).
-- A future family (Llama/Gemma/DeepSeek/…) adds a profile and an explicit
-  selector instead of editing the adapter.
+- **Behaviorally effective**: `defaultReasoningWire(profile)` is driven by
+  `supportsThinkingKwargs` — only a profile that declares its template
+  handles the Qwen kwargs defaults to sending them; unknown (`undefined`) or
+  unsupported (`false`) → `'none'`. `ReasoningWireMode` gained `'none'`, and
+  `serialize.applyReasoningToRequest` sends no reasoning wire fields for it.
+- Explicit `reasoning.wire` configuration always wins (resolved in
+  `resolveAdapterOptions`); `reasoning-fields` stays available to unknown
+  families on explicit configuration (llama.cpp-native fields, not
+  Qwen-oriented).
+- A future family (Llama/Gemma/DeepSeek/…) adds a profile (declaring
+  `supportsThinkingKwargs` as appropriate) and an explicit selector instead
+  of editing the adapter.
 
 ## Acceptance mapping
 
@@ -77,10 +85,17 @@ model-family compatibility profile        ← ModelFamilyProfile
 2. ✅ Qwen-specific reasoning/template behavior is identifiable
    (`src/compat.ts` QWEN_PROFILE + `src/serialize.ts` wire layer comments)
    and isolated behind the profile seam.
-3. ✅ Unknown/non-Qwen models receive no Qwen-only wire parameters unless
-   explicitly configured — `preserve_thinking` absent for unknown families by
-   default; explicit configuration opts in.
-4. ✅ Existing Qwen behavior and tests unchanged (218 + 8 new green; default
-   resolution regression-guarded).
+3. ✅ Unknown/non-Qwen models receive no Qwen-only wire parameters by default
+   — unknown family resolves to `reasoning.wire: 'none'`; `enable_thinking`
+   / `preserve_thinking` are absent unless (a) explicitly configured
+   (`reasoning.wire` / `preserveThinking`), (b) capability metadata says the
+   template supports them, or (c) an explicit family profile (Qwen) declares
+   support (`supportsThinkingKwargs: true`). Tests assert absence for the
+   default unknown path and presence for the explicit/profile paths.
+4. ✅ Existing Qwen behavior preserved when explicitly selected — the Qwen
+   profile keeps `chat-template-kwargs` (test fixtures default to
+   `modelFamily: 'qwen'`; the web profile and example scripts declare it
+   explicitly; e2e against the real Qwen server shows
+   `thinking_budget_tokens: 4096` still sent). 229 tests green.
 5. ✅ The architecture is explainable to upstream: a llama.cpp provider with
    optional model-family compatibility profiles.

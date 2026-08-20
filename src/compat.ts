@@ -62,17 +62,18 @@ export const QWEN_PROFILE: ModelFamilyProfile = {
 };
 
 /**
- * The unknown/default family. It shares llama.cpp's *generic* template-kwargs
- * mechanism (a llama.cpp build forwards `chat_template_kwargs` to any
- * template) but inherits nothing Qwen-specific: capabilities the family does
- * not declare stay unknown, and the wire default is the generic one, always
- * overridable by explicit `reasoning.wire`.
+ * The unknown/default family. It inherits nothing Qwen-specific: template
+ * kwargs support is unknown, so the default wire mode is `'none'` — no
+ * `enable_thinking` / `preserve_thinking` kwargs are sent unless the user
+ * explicitly configures a wire mode (or an explicit profile declares
+ * support). `reasoning-fields` remains available on explicit configuration
+ * for builds whose native fields the user has verified.
  */
 export const UNKNOWN_PROFILE: ModelFamilyProfile = {
   id: 'unknown',
   label: 'Unknown model family',
   reasoning: {
-    defaultWire: 'chat-template-kwargs',
+    defaultWire: 'none',
   },
 };
 
@@ -83,9 +84,14 @@ export function familyProfileFor(id: ModelFamilyId | undefined): ModelFamilyProf
 }
 
 /**
- * The effective default wire mode for one family: the profile's default,
- * which explicit `reasoning.wire` configuration overrides upstream.
+ * The effective default wire mode for one family — **behaviorally driven by
+ * `supportsThinkingKwargs`**: only a profile that declares its template
+ * handles the Qwen-oriented kwargs defaults to sending them; unknown
+ * (`undefined`) or explicitly unsupported (`false`) means `'none'`. Explicit
+ * `reasoning.wire` configuration always overrides this upstream.
  */
 export function defaultReasoningWire(profile: ModelFamilyProfile): ReasoningWireMode {
-  return profile.reasoning.defaultWire;
+  return profile.reasoning.supportsThinkingKwargs === true
+    ? 'chat-template-kwargs'
+    : 'none';
 }

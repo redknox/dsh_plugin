@@ -120,6 +120,15 @@ export function serializeMessages(messages: readonly Message[]): LlamaCppChatMes
  * Translate a resolved reasoning policy into llama.cpp request fields. This is
  * the only layer that maps semantic reasoning to wire fields.
  *
+ * Wire-mode semantics (issue #18): `chat-template-kwargs` sends the Qwen-style
+ * `enable_thinking` / `preserve_thinking` template kwargs — only for a model
+ * family that declares support (the Qwen profile) or when the user explicitly
+ * configured that wire mode; `reasoning-fields` sends the llama.cpp-native
+ * `reasoning_effort` / `thinking_budget_tokens` per-request fields; `none`
+ * sends no reasoning wire fields at all — the default for families whose
+ * template-kwargs support is unknown, so nothing Qwen-oriented is ever sent
+ * silently.
+ *
  * Version dependence: `chat_template_kwargs.enable_thinking` /
  * `chat_template_kwargs.preserve_thinking` are Qwen chat-template kwargs,
  * honored by llama.cpp builds with the per-request template-kwargs hook
@@ -133,6 +142,7 @@ export function serializeMessages(messages: readonly Message[]): LlamaCppChatMes
  * those native fields, so it can ride alongside them in either mode.
  */
 function applyReasoningToRequest(request: LlamaCppChatCompletionRequest, policy: ResolvedReasoningPolicy): void {
+  if (policy.wire === 'none') return;
   if (policy.wire === 'chat-template-kwargs') {
     request.chat_template_kwargs = policy.enabled
       ? { enable_thinking: true, ...(policy.preserveThinking ? { preserve_thinking: true } : {}) }

@@ -89,7 +89,7 @@ try {
   await llmScope.await();
   scope = ctx.plugin(
     { name: plugin.name, inject: plugin.inject, Config: plugin.Config, apply: plugin.apply },
-    { baseURL, model, apiKeyEnv },
+    { baseURL, model, apiKeyEnv, modelFamily: 'qwen' }, // issue #18: these examples validate the Qwen profile explicitly
   );
   await scope.await();
 

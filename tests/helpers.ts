@@ -59,13 +59,18 @@ export interface HarnessResult {
   calls: Array<{ baseURL: string; clientOptions: unknown }>;
 }
 
-/** Build an adapter whose transport client is a recording fake. */
+/**
+ * Build an adapter whose transport client is a recording fake. The harness
+ * defaults to the validated Qwen family profile (`modelFamily: 'qwen'`) so
+ * adapter-level tests keep exercising the Qwen chat-template wire behavior;
+ * issue #18 generic-path tests override it with `modelFamily: 'auto'`.
+ */
 export function harness(
   config: Record<string, unknown> = {},
   chunks?: ChunkSource,
   logger?: { debug: (message: string) => void },
 ): HarnessResult {
-  const options = () => resolveAdapterOptions(config) as ResolvedAdapterOptions;
+  const options = () => resolveAdapterOptions({ modelFamily: 'qwen', ...config }) as ResolvedAdapterOptions;
   const fakeChat = vi.fn().mockImplementation(() => toAsync(typeof chunks === 'function' ? chunks() : (chunks ?? [])));
   const fakeClient: LlamaCppChatHandle = { chat: fakeChat };
   const calls: Array<{ baseURL: string; clientOptions: unknown }> = [];

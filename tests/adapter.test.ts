@@ -69,7 +69,10 @@ async function* toAsync(source: Iterable<LlamaCppChatCompletionChunk> | AsyncIte
 }
 
 function harness(config: Record<string, unknown> = {}, chunks?: ChunkSource) {
-  const options = () => resolveAdapterOptions(config) as ResolvedAdapterOptions;
+  // Default to the validated Qwen family profile: these tests exercise the
+  // Qwen chat-template wire behavior (issue #18 keeps it behind explicit
+  // profile selection).
+  const options = () => resolveAdapterOptions({ modelFamily: 'qwen', ...config }) as ResolvedAdapterOptions;
   const fakeChat = vi.fn().mockImplementation(() => toAsync(typeof chunks === 'function' ? chunks() : (chunks ?? [])));
   const fakeClient: LlamaCppChatHandle = { chat: fakeChat };
   const calls: Array<{ baseURL: string; clientOptions: unknown }> = [];

@@ -32,8 +32,18 @@ import {
 /** Semantic reasoning levels offered to Harness users. */
 export type ReasoningLevel = 'off' | 'low' | 'medium' | 'xhigh';
 
-/** How a resolved policy is translated to llama.cpp request fields. */
-export type ReasoningWireMode = 'chat-template-kwargs' | 'reasoning-fields';
+/**
+ * How a resolved policy is translated to llama.cpp request fields.
+ * - `chat-template-kwargs`: Qwen-style `enable_thinking` / `preserve_thinking`
+ *   template kwargs (only for families that declare support, or on explicit
+ *   configuration);
+ * - `reasoning-fields`: native per-request `reasoning_effort` /
+ *   `thinking_budget_tokens` fields (llama.cpp-generic);
+ * - `none`: no reasoning wire fields at all — the default for families whose
+ *   template-kwargs support is unknown, so nothing Qwen-oriented is ever sent
+ *   silently (issue #18).
+ */
+export type ReasoningWireMode = 'chat-template-kwargs' | 'reasoning-fields' | 'none';
 
 /**
  * One semantic reasoning preset. `enabled` is the master thinking switch;

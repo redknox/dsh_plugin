@@ -23,7 +23,10 @@ describe('resolveAdapterOptions', () => {
     expect(options.apiKeyHeader).toBe(DEFAULT_API_KEY_HEADER);
     expect(options.apiKeyEnv).toBeUndefined();
     expect(options.streamIdleTimeoutMs).toBe(DEFAULT_STREAM_IDLE_TIMEOUT_MS);
-    expect(options.reasoning).toMatchObject({ enabled: true, preset: 'medium', wire: 'chat-template-kwargs' });
+    // Unknown family default (issue #18): wire 'none' — no Qwen-oriented
+    // kwargs are sent unless explicitly configured or profile-backed.
+    expect(options.reasoning).toMatchObject({ enabled: true, preset: 'medium', wire: 'none' });
+    expect(options.family.id).toBe('unknown');
   });
 
   it('passes through configured values', () => {

@@ -29,7 +29,7 @@ const llmScope = ctx.plugin(LlmRuntime);
 await llmScope.await();
 const scope = ctx.plugin(
   { name: plugin.name, inject: plugin.inject, Config: plugin.Config, apply: plugin.apply },
-  { baseURL, model, apiKeyEnv },
+  { baseURL, model, apiKeyEnv, modelFamily: 'qwen' }, // issue #18: these examples validate the Qwen profile explicitly
 );
 await scope.await();
 
