@@ -44,9 +44,29 @@ dsh plugin --profile <name> add ./llm-llamacpp-0.1.0.tgz
 # source / Git commit (needs the allowBuilds step — see docs/install.md)
 dsh plugin --profile <name> add github:redknox/dsh_plugin#<commit-sha>
 
-# npm registry (once published)
+# npm registry (published)
 dsh plugin --profile <name> add llm-llamacpp
 ```
+
+## Published — llm-llamacpp@0.1.0 (2026-08-20)
+
+Published to the npm registry (first release). Registry E2E on a fresh DSH
+profile (`npm-e2e`, dsh 0.1.0-rc.7, pnpm 11.7.0):
+
+| Check | Result |
+|---|---|
+| `npm publish` (granular token, Read-and-write + Bypass 2FA) | ✅ `+ llm-llamacpp@0.1.0`; registry shows `dist-tags.latest = 0.1.0`, tarball present |
+| `dsh plugin --profile npm-e2e add llm-llamacpp@0.1.0` | ✅ registry install, **no allowBuilds / no checkout / no npx cache** |
+| `dsh.profile.bundles` | ✅ `['@deepseek-ai/dsh-base', 'llm-llamacpp']` (auto-reconciled) |
+| `--dump-config` | ✅ `# == llm-llamacpp` → package-name entry |
+| Boot (official `boot()` API) | ✅ `llm` service mounted; `llamacpp-local` provider active from the registry dependency tree |
+| Dependency identity | ✅ peers via `~/.dsh/profiles/node_modules` shared links — single Harness/Cordis runtime identity |
+| `remove` + reinstall | ✅ bundles reconcile `['@deepseek-ai/dsh-base']` ↔ `['@deepseek-ai/dsh-base', 'llm-llamacpp']` |
+
+Publishing note: npm requires **2FA or a granular access token with "Bypass
+2FA for publish"** for new unscoped packages; use the bypass token (or an
+OTP) for future releases. `0.1.0` is immutable — later fixes must bump the
+version (`0.1.1`, …).
 
 ## Release checklist (npm publication)
 

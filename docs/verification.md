@@ -254,6 +254,6 @@ plugin's schema serialization (9 collapsed markers).
 | #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm.discoverModels` for the `llm-llamacpp` namespace; Models-page UI PoC via `upstream-poc/` patch |
 | #14 generic provider editor | upstream branch `feat/generic-provider-editor` (`upstream/generic-provider-editor.patch`); the Models page edits `llm-llamacpp` through the schema-driven generic editor (no hard-coded family) |
 | #15 Git installable bundle | `dsh plugin --profile <fresh> add github:redknox/dsh_plugin#<sha>` installs and boots on a fresh profile (`docs/install.md`; verified SHA `313c210`, dsh 0.1.0-rc.7) |
-| #17 prebuilt artifact / npm prep | `pnpm pack` tarball installs one-pass into a fresh profile (no allowBuilds), bundle auto-reconciled, boots with provider active, remove/reinstall OK (`docs/release.md`; name `llm-llamacpp` verified free on npm) |
+| #17 prebuilt artifact / npm prep | **published `llm-llamacpp@0.1.0`** (registry E2E: install, bundle reconcile, boot, provider active, remove/reinstall — `docs/release.md`) |
 | #19 generic-editor readability | upstream branch adds semantic groups (collapsed via `ui.collapsed`), `ui.label`/`ui.description` field help, ui-metadata fallback (234 tests); plugin schema declares the hints (229 tests) |
 | #18 Qwen assumption audit | `ModelFamilyProfile` seam (`src/compat.ts`, explicit `modelFamily` selector, no model-name heuristic); non-Qwen model path proven; audit in `docs/exploration/qwen-audit.md` |
