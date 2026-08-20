@@ -31,11 +31,13 @@ export interface DiscoveredModel {
   readonly supportsReasoning?: boolean;
 }
 
-/** One discovery round: models plus optional degradation reason. */
+/** One discovery round: models plus optional connectivity/degradation facts. */
 export interface DiscoveryResult {
   /** Epoch ms when the discovery was performed. */
   readonly at: number;
   readonly models: readonly DiscoveredModel[];
+  /** `/health` connectivity signal: true on 2xx, false when unreachable. */
+  readonly healthy?: boolean;
   /** Degradation reason when a probe failed or was aborted. */
   readonly error?: string;
 }
@@ -206,10 +208,21 @@ export class EndpointDiscovery {
 
   private async probe(signal?: AbortSignal): Promise<DiscoveryResult> {
     const at = Date.now();
-    const modelUrl = `${this.baseURL.replace(/\/+$/, '')}/v1/models`;
-    const propsUrl = `${this.baseURL.replace(/\/+$/, '')}/props`;
+    const base = this.baseURL.replace(/\/+$/, '');
+    const modelUrl = `${base}/v1/models`;
+    const propsUrl = `${base}/props`;
     let models: DiscoveredModel[] = [];
     const errors: string[] = [];
+    // /health is an independent connectivity signal: healthy on 2xx, false
+    // when missing/unreachable — it never affects models/props discovery and
+    // never degrades a configured deployment. Cancellation still aborts it.
+    let healthy: boolean | undefined;
+    try {
+      healthy = await this.getHealth(signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      healthy = false;
+    }
     try {
       // Each probe fails independently: a missing /v1/models can still yield
       // the loaded model from /props, and vice versa. Cancellation is NOT
@@ -238,13 +251,37 @@ export class EndpointDiscovery {
       errors.push(error instanceof Error ? error.message : String(error));
     }
     if (models.length === 0 && errors.length > 0) {
-      return { at, models, error: errors.join('; ') };
+      return { at, models, ...(healthy !== undefined ? { healthy } : {}), error: errors.join('; ') };
     }
     return {
       at,
       models,
+      ...(healthy !== undefined ? { healthy } : {}),
       ...(errors.length > 0 ? { error: errors.join('; ') } : {}),
     };
+  }
+
+  /**
+   * `/health` probe: true on 2xx, false on non-2xx/network/timeout — a
+   * non-critical signal that never breaks discovery. Caller cancellation
+   * always propagates (throws `ABORTED`).
+   */
+  private async getHealth(signal?: AbortSignal): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs());
+    const combined = signal !== undefined ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    try {
+      const response = await fetch(`${this.baseURL.replace(/\/+$/, '')}/health`, {
+        signal: combined,
+        ...(this.options.auth !== undefined ? { headers: { [this.options.auth.name]: this.options.auth.value } } : {}),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+      if (signal?.aborted) this.aborted(signal);
+    }
   }
 
   private async getJson(url: string, signal?: AbortSignal): Promise<unknown> {

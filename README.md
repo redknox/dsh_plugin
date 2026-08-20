@@ -174,6 +174,9 @@ discovery:
 
 What is probed and how:
 
+- `/health` — connectivity signal (`healthy: true` on 2xx; a missing or
+  unreachable `/health` reports `healthy: false` without affecting model
+  discovery or a configured deployment).
 - `/v1/models` — exact model ids (`data[].id`, with the llama.cpp/ollama-style
   `models[]` list also accepted) and context-window metadata from
   `data[].meta.n_ctx` (falling back to `/props.n_ctx` for a single-model

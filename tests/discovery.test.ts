@@ -34,6 +34,50 @@ function okClient(): LlamaCppChatHandle {
 const baseOptions: GenerateOptions = { provider: 'llamacpp-local', model: 'qwen3', messages: [] };
 
 describe('EndpointDiscovery probes', () => {
+  it('reports healthy when /health answers 2xx and models are discovered', async () => {
+    stubFetch((url) => (
+      url.endsWith('/health')
+        ? jsonResponse({ status: 'ok' })
+        : url.endsWith('/v1/models')
+          ? jsonResponse({ data: [{ id: 'm1' }] })
+          : jsonResponse({})
+    ));
+    const result = await new EndpointDiscovery('http://a').discover();
+    expect(result.healthy).toBe(true);
+    expect(result.models.map((m) => m.id)).toEqual(['m1']);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('degrades gracefully when /health fails but /v1/models works (review regression)', async () => {
+    stubFetch((url) => (
+      url.endsWith('/health')
+        ? new Response('not found', { status: 404 })
+        : url.endsWith('/v1/models')
+          ? jsonResponse({ data: [{ id: 'm1' }] })
+          : jsonResponse({})
+    ));
+    const result = await new EndpointDiscovery('http://a').discover();
+    expect(result.healthy).toBe(false);
+    // Models discovery is unaffected by a missing /health.
+    expect(result.models.map((m) => m.id)).toEqual(['m1']);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('treats a /health timeout as unhealthy without blocking models discovery', async () => {
+    stubFetch((url, init) => (
+      url.endsWith('/health')
+        ? new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          })
+        : url.endsWith('/v1/models')
+          ? jsonResponse({ data: [{ id: 'm1' }] })
+          : jsonResponse({})
+    ));
+    const result = await new EndpointDiscovery('http://a', { timeoutMs: 50 }).discover();
+    expect(result.healthy).toBe(false);
+    expect(result.models.map((m) => m.id)).toEqual(['m1']);
+  });
+
   it('discovers model ids and context windows from /v1/models meta', async () => {
     stubFetch((url) => (
       url.endsWith('/v1/models')
@@ -91,12 +135,12 @@ describe('EndpointDiscovery caching and cancellation', () => {
     });
     const discovery = new EndpointDiscovery('http://a', { ttlMs: 60_000 });
     await discovery.discover();
-    expect(calls).toBe(2); // /v1/models + /props
+    expect(calls).toBe(3); // /health + /v1/models + /props
     await discovery.discover(); // cached
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     discovery.clear();
     await discovery.discover();
-    expect(calls).toBe(4);
+    expect(calls).toBe(6);
   });
 
   it('honors cancellation promptly', async () => {
