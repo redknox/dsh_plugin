@@ -18,6 +18,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { LlmError, assertUsableApiKey } from '@deepseek-ai/dsh-llm';
 import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
+import { DiagnosticsStore } from './diagnostics.ts';
 import { LlamacppAdapter } from './adapter.ts';
 import {
   Config,
@@ -28,7 +29,7 @@ import {
   type ConfigType,
   type ResolvedAdapterOptions,
 } from './config.ts';
-import { NoopTelemetry, logTelemetry, type TelemetrySink } from './telemetry.ts';
+import { compositeTelemetry, logTelemetry, type TelemetrySink } from './telemetry.ts';
 
 export { Config, DEFAULT_PROVIDER_NAME, PLUGIN_NAME, PROVIDER, resolveAdapterOptions };
 export type { ConfigType, ResolvedAdapterOptions };
@@ -94,11 +95,29 @@ export function apply(ctx: Context, config: ConfigType): void {
     );
   };
 
+  // Bounded diagnostics store (issue #12): a passive telemetry consumer that
+  // never retains content; its machine-readable snapshot is provided as a
+  // context service for operators/tooling.
+  const diagnosticsStore = new DiagnosticsStore();
+
   // Structured telemetry (issue #8): enabled by default as structured debug
   // log lines; `telemetry.enabled: false` disables emission without changing
-  // provider behavior. Re-read per operation so the toggle applies live.
-  const telemetry = (): TelemetrySink => (options().telemetry.enabled ? logTelemetry(ctx.logger) : NoopTelemetry);
+  // provider behavior. The diagnostics store keeps consuming events whenever
+  // diagnostics is enabled. Re-read per operation so toggles apply live.
+  const telemetry = (): TelemetrySink => compositeTelemetry([
+    ...(options().telemetry.enabled ? [logTelemetry(ctx.logger)] : []),
+    ...(options().diagnostics.enabled ? [diagnosticsStore] : []),
+  ]);
   const adapter = new LlamacppAdapter({ options, resolveApiKey, logger: ctx.logger, telemetry });
+
+  const modelList = (): string[] => [...new Set([options().model, ...adapter.cachedDiscoveredModels()])];
+  const endpointUrls = (): string[] => options().endpointProfiles.map((profile) => profile.baseURL);
+  ctx.provide('llm-llamacpp/diagnostics', {
+    /** Machine-readable snapshot (issue #12). */
+    snapshot: () => diagnosticsStore.snapshot(adapter.pool, endpointUrls(), modelList()),
+    /** Human-readable rendering for local operations. */
+    render: () => diagnosticsStore.render(adapter.pool, endpointUrls(), modelList()),
+  });
 
   ctx.llm.registerConfigurableProviders([
     {

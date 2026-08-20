@@ -146,6 +146,34 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
     }
   });
 
+  it('exposes the diagnostics service through the context (issue #12)', async () => {
+    fetchMock.mockResolvedValue(
+      sseResponse([
+        data({ id: '1', model: 'qwen3', choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }] }),
+        data({ id: '1', model: 'qwen3', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        `data: ${SSE_DONE}\n\n`,
+      ]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const ctx = await mounted({ baseURL: 'http://127.0.0.1:8080' });
+
+    for await (const _chunk of ctx.llm.stream({
+      provider: PROVIDER,
+      model: 'qwen3',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } })],
+    })) void _chunk;
+
+    const diagnostics = ctx.get('llm-llamacpp/diagnostics') as {
+      snapshot: () => { requests: { total: number }; endpoints: readonly unknown[] };
+      render: () => string;
+    };
+    expect(diagnostics).toBeDefined();
+    const snapshot = diagnostics.snapshot();
+    expect(snapshot.requests.total).toBe(1);
+    expect(snapshot.endpoints.length).toBeGreaterThan(0);
+    expect(diagnostics.render()).toContain('llm-llamacpp diagnostics');
+  });
+
   it('round-trips tool schemas and streamed tool calls through ctx.llm (issue #5)', async () => {
     // First turn: fragmented tool-call frames from a mocked llama.cpp server.
     fetchMock.mockResolvedValueOnce(

@@ -120,6 +120,24 @@ export class EndpointPool {
     return Date.now() >= state.backoffUntil;
   }
 
+  /** Expose one endpoint's health facts for diagnostics (issue #12). */
+  healthOf(baseURL: string): {
+    healthy: boolean;
+    inBackoff: boolean;
+    backoffUntilMs?: number;
+    consecutiveFailures?: number;
+  } {
+    const state = this.states.get(baseURL);
+    if (state === undefined) return { healthy: true, inBackoff: false };
+    const now = Date.now();
+    return {
+      healthy: now >= state.backoffUntil,
+      inBackoff: now < state.backoffUntil,
+      backoffUntilMs: state.backoffUntil,
+      consecutiveFailures: state.consecutiveFailures,
+    };
+  }
+
   /**
    * Ordered, health-aware candidate selection. Healthy endpoints in
    * configuration order; when every endpoint is in backoff, fall back to the

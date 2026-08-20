@@ -125,6 +125,15 @@ export interface TelemetrySink {
 /** Disabled sink: drops every event. */
 export const NoopTelemetry: TelemetrySink = { emit: () => {} };
 
+/** Fan out one event to several sinks (e.g. log + diagnostics, issue #12). */
+export function compositeTelemetry(sinks: readonly TelemetrySink[]): TelemetrySink {
+  return {
+    emit(event) {
+      for (const sink of sinks) sink.emit(event);
+    },
+  };
+}
+
 /** Minimal structured logger surface the log sink needs. */
 export interface TelemetryLogger {
   debug(message: string, ...args: unknown[]): void;

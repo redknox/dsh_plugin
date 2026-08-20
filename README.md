@@ -232,6 +232,41 @@ The chosen budget and the feedback rationale ride the `reason` field of the
 `reasoning` telemetry event, so decisions stay inspectable through #8
 observability.
 
+## Production diagnostics (issue #12)
+
+A bounded, machine-readable diagnostics surface sourced from the #8 telemetry
+events and the #7 endpoint health state. `diagnostics.enabled` defaults to
+`true`; it is a passive, content-free consumer — a plain single-endpoint
+deployment neither requires it nor changes behavior.
+
+The plugin provides the context service `llm-llamacpp/diagnostics` with:
+
+- `snapshot()` — machine-readable snapshot (framework-independent API):
+  - `endpoints` — configured endpoints with health/backoff state (from the
+    reliability pool) and request volume;
+  - `models` — configured model plus cached discovered model ids (#10);
+  - `requests` — totals by outcome (success/failure/timeout/aborted), retries
+    and fallbacks, tool-call activity, reasoning token usage, and breakdowns
+    by endpoint / failure code / finish reason;
+  - `latency` — bounded rolling windows (last 200 samples) for TTFT and total
+    latency (avg/min/max);
+  - `recentRouting` / `recentFailures` — bounded (20 each) recent decisions
+    and failures.
+- `render()` — human-readable block for local operations/debugging.
+
+```bash
+npm run build
+LLAMACPP_BASE_URL=http://10.60.84.212:8040 \
+LLAMACPP_MODEL=/models/Qwen3.8-27B-Q8_0.gguf \
+LLAMA_API_TOKEN=<token> node examples/diagnostics.mjs
+```
+
+Troubleshooting flow: check endpoint rows for `BACKOFF` (consecutive failures
+and retry-until timestamps), then request counters and failure-code breakdown,
+then latency windows and the recent failure tail — without reading raw
+application logs. Retention is bounded (rolling windows and capped lists) and
+no raw prompt/completion/tool-argument content is ever retained.
+
 ## Observability (issue #8)
 
 Optional structured request telemetry, emitted through a narrow sink (no

@@ -239,6 +239,21 @@ export class LlamacppAdapter extends LlmAdapter {
     };
   }
 
+  /**
+   * Union of cached discovered model ids across endpoints (issue #12
+   * diagnostics). Empty when discovery is disabled or no fresh cache exists.
+   */
+  cachedDiscoveredModels(): readonly string[] {
+    const opts = this.deps.options();
+    if (!opts.discovery.enabled) return [];
+    const ids = new Set<string>();
+    for (const profile of opts.endpointProfiles) {
+      const result = this.discoveryFor(profile.baseURL).discoverCached();
+      for (const entry of result?.models ?? []) ids.add(entry.id);
+    }
+    return [...ids];
+  }
+
   /** Union of discovered model ids across configured endpoints (deduped). */
   private async discoveredModels(): Promise<readonly DiscoveredModel[]> {
     const opts = this.deps.options();

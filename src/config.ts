@@ -93,6 +93,11 @@ const DiscoverySchema = z.object({
   timeoutMs: z.number().step(1).min(1),
 });
 
+/** Bounded diagnostics store (issue #12); on by default, passive and cheap. */
+const DiagnosticsSchema = z.object({
+  enabled: z.boolean().default(true),
+});
+
 /** Endpoint capability metadata for capability-aware routing (issue #9). */
 const EndpointCapabilitiesSchema = z.object({
   models: z.array(z.string()),
@@ -151,6 +156,8 @@ export const Config = z.object({
   telemetry: TelemetrySchema,
   /** Model/capability discovery (issue #10); off keeps single-server simple. */
   discovery: DiscoverySchema,
+  /** Bounded production diagnostics (issue #12). */
+  diagnostics: DiagnosticsSchema,
   /** Semantic Qwen reasoning controls (presets + expert overrides). */
   reasoning: ReasoningSchema,
 });
@@ -178,6 +185,8 @@ export type ConfigType = {
   telemetry?: { enabled?: boolean };
   /** Model/capability discovery (issue #10). */
   discovery?: { enabled?: boolean; ttlMs?: number; timeoutMs?: number };
+  /** Bounded production diagnostics (issue #12). */
+  diagnostics?: { enabled?: boolean };
   /** Semantic Qwen reasoning controls. */
   reasoning?: {
     enabled?: boolean;
@@ -218,6 +227,8 @@ export interface ResolvedAdapterOptions {
   readonly telemetry: { enabled: boolean };
   /** Model/capability discovery tuning (issue #10). */
   readonly discovery: { enabled: boolean; ttlMs?: number; timeoutMs?: number };
+  /** Bounded diagnostics toggle (issue #12). */
+  readonly diagnostics: { enabled: boolean };
   readonly reasoning: ReasoningPolicyConfig;
 }
 
@@ -325,6 +336,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
       ...(config.discovery?.ttlMs !== undefined ? { ttlMs: config.discovery.ttlMs } : {}),
       ...(config.discovery?.timeoutMs !== undefined ? { timeoutMs: config.discovery.timeoutMs } : {}),
     },
+    diagnostics: { enabled: config.diagnostics?.enabled ?? true },
     reasoning,
   };
 }
