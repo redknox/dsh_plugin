@@ -162,36 +162,12 @@ export class LlamacppAdapter extends LlmAdapter {
    * included) are normalized by `LlmRuntime` into a terminal `finish` chunk.
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const opts = this.deps.options();
-    const context = policyContext(options, opts.reasoning.adaptive?.hints);
-    // The adapter depends only on the inference-policy seam; it has no
-    // knowledge of whether the resolved policy is static or adaptive.
-    const reasoning = buildReasoningPolicy(opts.reasoning).resolve({
-      effort: options.reasoningEffort,
-      purpose: options.purpose,
-      context,
-    });
-    this.deps.logger?.debug(
-      `llm-llamacpp reasoning decision: ${reasoning.reason ?? 'static preset'} ` +
-        `(enabled=${reasoning.enabled}, effort=${reasoning.effort ?? '-'}, budget=${reasoning.budgetTokens ?? '-'})`,
-    );
-    const request = serializeRequest(options, reasoning);
-    const apiKey = await this.deps.resolveApiKey();
-    const auth = apiKey !== undefined
-      ? {
-          name: opts.apiKeyHeader,
-          value: opts.apiKeyHeader === 'authorization' ? `Bearer ${apiKey}` : apiKey,
-        }
-      : undefined;
-    const endpoints: readonly ReliabilityEndpoint[] = opts.endpoints.map((baseURL) => ({
-      baseURL,
-      ...(auth !== undefined ? { auth } : {}),
-    }));
-    const createClient = this.deps.createClient ?? defaultCreateClient;
-
-    // Structured observability (issue #8): one trace per request from adapter
-    // entry through endpoint selection to the terminal result. The sink is
-    // per-operation so telemetry can be disabled without touching the adapter.
+    // Structured observability (issue #8): the request lifecycle starts at
+    // adapter entry, BEFORE any work, so pre-transport failures (reasoning
+    // resolution, serialization, credential resolution) converge into the
+    // same trace with true end-to-end latency and a stable requestId. The
+    // sink is per-operation so telemetry can be disabled without touching the
+    // adapter.
     const sink = (this.deps.telemetry ?? (() => NoopTelemetry))();
     const requestId = newRequestId();
     const startedAt = Date.now();
@@ -202,8 +178,6 @@ export class LlamacppAdapter extends LlmAdapter {
       context: {
         model: options.model,
         ...(options.purpose !== undefined ? { purpose: options.purpose } : {}),
-        ...(reasoning.effort !== undefined ? { reasoningEffort: reasoning.effort } : {}),
-        ...(reasoning.budgetTokens !== undefined ? { reasoningBudgetTokens: reasoning.budgetTokens } : {}),
         toolsAvailable: (options.tools?.length ?? 0) > 0,
       },
     });
@@ -224,7 +198,7 @@ export class LlamacppAdapter extends LlmAdapter {
         requestId,
         at: startedAt + totalMs,
         outcome: {
-          endpoint: lastEndpoint ?? opts.baseURL,
+          endpoint: lastEndpoint ?? 'unresolved',
           retryCount,
           fallbackCount,
           ...(ttftMs !== undefined ? { ttftMs } : {}),
@@ -240,6 +214,44 @@ export class LlamacppAdapter extends LlmAdapter {
     };
 
     try {
+      const opts = this.deps.options();
+      const context = policyContext(options, opts.reasoning.adaptive?.hints);
+      // The adapter depends only on the inference-policy seam; it has no
+      // knowledge of whether the resolved policy is static or adaptive.
+      const reasoning = buildReasoningPolicy(opts.reasoning).resolve({
+        effort: options.reasoningEffort,
+        purpose: options.purpose,
+        context,
+      });
+      sink.emit({
+        type: 'reasoning',
+        requestId,
+        at: Date.now(),
+        decision: {
+          enabled: reasoning.enabled,
+          ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}),
+          ...(reasoning.budgetTokens !== undefined ? { budgetTokens: reasoning.budgetTokens } : {}),
+          ...(reasoning.reason !== undefined ? { reason: reasoning.reason } : {}),
+        },
+      });
+      this.deps.logger?.debug(
+        `llm-llamacpp reasoning decision: ${reasoning.reason ?? 'static preset'} ` +
+          `(enabled=${reasoning.enabled}, effort=${reasoning.effort ?? '-'}, budget=${reasoning.budgetTokens ?? '-'})`,
+      );
+      const request = serializeRequest(options, reasoning);
+      const apiKey = await this.deps.resolveApiKey();
+      const auth = apiKey !== undefined
+        ? {
+            name: opts.apiKeyHeader,
+            value: opts.apiKeyHeader === 'authorization' ? `Bearer ${apiKey}` : apiKey,
+          }
+        : undefined;
+      const endpoints: readonly ReliabilityEndpoint[] = opts.endpoints.map((baseURL) => ({
+        baseURL,
+        ...(auth !== undefined ? { auth } : {}),
+      }));
+      const createClient = this.deps.createClient ?? defaultCreateClient;
+
       for await (const chunk of translate(streamReliably(request, {
         endpoints,
         retryPolicy: opts.retryPolicy,

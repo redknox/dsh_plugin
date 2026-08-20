@@ -128,15 +128,17 @@ Harness agent-loop coupling). `telemetry.enabled` defaults to `true` and emits
 one JSON line per event at `debug` level; set `false` to disable emission
 without changing provider behavior.
 
-One request is traced from adapter entry through endpoint selection to the
-terminal result via three event kinds (each carries the stable trace
-`requestId`):
+One request is traced from **adapter entry** (the lifecycle starts before any
+work, so reasoning/serialization/credential failures converge into the same
+trace with true end-to-end latency) through endpoint selection to the terminal
+result via these event kinds (each carries the stable trace `requestId`):
 
 | event | fields | units / cardinality |
 |---|---|---|
-| `started` | `context: { model, purpose?, reasoningEffort?, reasoningBudgetTokens?, toolsAvailable }` | once per request |
+| `started` | `context: { model, purpose?, toolsAvailable }` | once per request, at adapter entry |
+| `reasoning` | `decision: { enabled, effort?, budgetTokens?, reason? }` | once, after policy resolution |
 | `attempt` | `attempt: { attempt, baseURL, outcome: selected\|retry\|fallback, failureCode? }` | once per reliability attempt |
-| `finished` | `outcome: { endpoint, retryCount, fallbackCount, ttftMs?, totalMs, completionMs?, streamChunkCount, finishReason?, usage?, toolCallCount?, failureCode? }` | once per request |
+| `finished` | `outcome: { endpoint, retryCount, fallbackCount, ttftMs?, totalMs, completionMs?, streamChunkCount, finishReason?, usage?, toolCallCount?, failureCode? }` | once per request (success or failure) |
 
 Metric semantics:
 

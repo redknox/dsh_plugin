@@ -117,25 +117,25 @@ describe('telemetry on the success path', () => {
     void adapter;
   });
 
-  it('records reasoning effort/budget and purpose in the request context', async () => {
+  it('records reasoning effort/budget as a structured decision and purpose in context', async () => {
     const { sink, events } = recording();
     const { adapter } = harness({ baseURL: 'http://127.0.0.1:8080', reasoning: { preset: 'xhigh' } }, { '*': okClient() }, sink);
     await collect(adapter.stream({ ...baseOptions, purpose: 'session-title' }));
-    // session-title disables thinking, so no budget rides the context.
-    expect(started(events)?.context).toMatchObject({
-      model: 'qwen3',
-      purpose: 'session-title',
-    });
-    expect(started(events)?.context.reasoningBudgetTokens).toBeUndefined();
+    // session-title disables thinking: purpose recorded, no budget decision.
+    expect(started(events)?.context).toMatchObject({ model: 'qwen3', purpose: 'session-title' });
+    const titledReasoning = events.find((e) => e.type === 'reasoning');
+    if (titledReasoning?.type !== 'reasoning') return;
+    expect(titledReasoning.decision.enabled).toBe(false);
+    expect(titledReasoning.decision.budgetTokens).toBeUndefined();
 
     const { sink: sink2, events: events2 } = recording();
     const { adapter: adapter2 } = harness({ baseURL: 'http://127.0.0.1:8080', reasoning: { preset: 'xhigh' } }, { '*': okClient() }, sink2);
     await collect(adapter2.stream(baseOptions));
-    expect(started(events2)?.context).toMatchObject({
-      model: 'qwen3',
-      reasoningEffort: 'xhigh',
-      reasoningBudgetTokens: 16384,
-    });
+    expect(started(events2)?.context).toMatchObject({ model: 'qwen3' });
+    expect(started(events2)?.context.purpose).toBeUndefined();
+    const decision = events2.find((e) => e.type === 'reasoning');
+    if (decision?.type !== 'reasoning') return;
+    expect(decision.decision).toMatchObject({ enabled: true, effort: 'xhigh', budgetTokens: 16384 });
   });
 });
 
@@ -187,6 +187,34 @@ describe('telemetry on retry/fallback', () => {
 });
 
 describe('telemetry on failure paths', () => {
+  it('traces a pre-transport credential failure with the same requestId (review regression)', async () => {
+    const { sink, events } = recording();
+    const options = resolveAdapterOptions({ baseURL: 'http://127.0.0.1:8080', apiKeyEnv: 'LLAMA_API_TOKEN' });
+    const adapter = new LlamacppAdapter({
+      options: () => options,
+      resolveApiKey: async () => {
+        throw new LlmError('llm-llamacpp: no API key for "LLAMA_API_TOKEN"', 'MISSING_CREDENTIAL');
+      },
+      createClient: vi.fn(),
+      telemetry: sink,
+    });
+    const { error } = await collect(adapter.stream(baseOptions));
+    expect((error as LlmError).code).toBe('MISSING_CREDENTIAL');
+
+    const startedEvent = started(events);
+    const finishedEvent = finished(events);
+    expect(startedEvent).toBeDefined();
+    expect(finishedEvent).toBeDefined();
+    expect(startedEvent?.requestId).toBe(finishedEvent?.requestId);
+    if (finishedEvent?.type !== 'finished') return;
+    expect(finishedEvent.outcome.failureCode).toBe('MISSING_CREDENTIAL');
+    expect(finishedEvent.outcome.endpoint).toBe('unresolved');
+    expect(finishedEvent.outcome.totalMs).toBeGreaterThanOrEqual(0);
+    expect(finishedEvent.outcome.retryCount).toBe(0);
+    // No transport attempt happened for a pre-transport failure.
+    expect(attempts(events)).toHaveLength(0);
+  });
+
   it('records ABORTED as the terminal failure code on cancellation', async () => {
     const { sink, events } = recording();
     const hanging: LlamaCppChatHandle = {

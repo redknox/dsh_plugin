@@ -63,6 +63,15 @@ export interface RequestOutcome {
   readonly failureCode?: string;
 }
 
+/** Resolved reasoning decision for the request (emitted after policy resolution). */
+export interface ReasoningDecisionEvent {
+  readonly enabled: boolean;
+  readonly effort?: string;
+  readonly budgetTokens?: number;
+  /** Adaptive/feedback rationale, when the policy produced one. */
+  readonly reason?: string;
+}
+
 /** One structured telemetry event. */
 export type TelemetryEvent =
   | {
@@ -70,6 +79,12 @@ export type TelemetryEvent =
       readonly requestId: string;
       readonly at: number;
       readonly context: RequestContext;
+    }
+  | {
+      readonly type: 'reasoning';
+      readonly requestId: string;
+      readonly at: number;
+      readonly decision: ReasoningDecisionEvent;
     }
   | {
       readonly type: 'attempt';
