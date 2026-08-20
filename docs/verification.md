@@ -165,6 +165,14 @@ credentials:        LLAMA_API_TOKEN source=env (untouched)
 Restored afterwards with `settings.mutate` unset of `reasoning` (user layer
 empty again, `llm-llamacpp` section removed from settings.yaml).
 
+A follow-up round confirmed the save → reopen round-trip in the UI: changed
+Reasoning preset to `low` again, **Apply**, then closed and reopened the
+editor — it displayed `low` (the earlier "still medium" observation was the
+restored state, not a UI bug). The **Fetch available models** picker was also
+exercised: picking the discovered model wrote it into the `model` user field
+(saved + re-displayed). Both overrides were then unset, leaving the user
+layer empty.
+
 ## Issue-to-behavior map
 
 | Issue | Observable in the running instance |
