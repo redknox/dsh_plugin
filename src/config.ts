@@ -25,6 +25,11 @@ import {
   type ReasoningPolicyConfig,
   type ReasoningWireMode,
 } from './reasoning.ts';
+import {
+  defaultReasoningWire,
+  familyProfileFor,
+  type ModelFamilyProfile,
+} from './compat.ts';
 import type { EndpointCapabilities, EndpointRoutingProfile } from './routing.ts';
 
 /** Cordis plugin short name; also the settings namespace and npm package name. */
@@ -135,6 +140,14 @@ export const Config = z.object({
   /** Default model id sent to the wire `model` field. */
   model: z.string().default(DEFAULT_MODEL),
   /**
+   * Explicit model-family selector (issue #18). `'auto'` resolves without a
+   * model-name heuristic to the `unknown` compatibility profile — nothing is
+   * silently inherited from the Qwen profile; `'qwen'` selects the validated
+   * Qwen compatibility profile explicitly. Explicit `reasoning.wire` always
+   * beats either profile's default.
+   */
+  modelFamily: z.union(['auto', 'qwen']).default('auto'),
+  /**
    * Optional environment variable naming the API key. Local llama.cpp needs
    * none; a reverse proxy in front of it may require one. The value is read
    * per request and never stored in the settings document.
@@ -175,6 +188,8 @@ export type ConfigType = {
   providerName?: string;
   /** Default model id sent to the wire `model` field. */
   model?: string;
+  /** Explicit model-family selector; `'auto'` resolves to the unknown profile (no heuristic). */
+  modelFamily?: 'auto' | 'qwen';
   /** Optional environment variable naming the API key. */
   apiKeyEnv?: string;
   /** Header that carries the key: `authorization` sends `Bearer <key>`, anything else sends the raw key. */
@@ -235,6 +250,8 @@ export interface ResolvedAdapterOptions {
   readonly discovery: { enabled: boolean; ttlMs?: number; timeoutMs?: number };
   /** Bounded diagnostics toggle (issue #12). */
   readonly diagnostics: { enabled: boolean };
+  /** Model-family compatibility profile (issue #18); never inferred from the model name. */
+  readonly family: ModelFamilyProfile;
   readonly reasoning: ReasoningPolicyConfig;
 }
 
@@ -306,11 +323,14 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
   const reasoningRaw = config.reasoning ?? {};
   const adaptiveRaw = reasoningRaw.adaptive;
   const feedbackRaw = reasoningRaw.feedback;
+  // Model-family profile: explicit selector only — never a model-name guess.
+  // Explicit reasoning.wire beats the profile's default below.
+  const family = familyProfileFor(config.modelFamily);
   const reasoning: ReasoningPolicyConfig = {
     enabled: reasoningRaw.enabled ?? true,
     preset: reasoningRaw.preset ?? 'medium',
     ...(reasoningRaw.expert !== undefined ? { expert: reasoningRaw.expert } : {}),
-    wire: reasoningRaw.wire ?? 'chat-template-kwargs',
+    wire: reasoningRaw.wire ?? defaultReasoningWire(family),
     ...(adaptiveRaw !== undefined
       ? {
           adaptive: {
@@ -343,6 +363,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
       ...(config.discovery?.timeoutMs !== undefined ? { timeoutMs: config.discovery.timeoutMs } : {}),
     },
     diagnostics: { enabled: config.diagnostics?.enabled ?? true },
+    family,
     reasoning,
   };
 }
