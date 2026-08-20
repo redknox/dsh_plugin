@@ -144,6 +144,27 @@ curl -s -X POST http://127.0.0.1:3080/api/settings.describe -H 'Content-Type: ap
 4. Revert the preset in the UI (or `settings.mutate` unset) and confirm the
    user layer returns empty.
 
+### UI walkthrough — verified live (2026-02-14, host restarted with the patch)
+
+Applied the patch, restarted, and walked through the editor in the running
+GUI: **Settings → Models → llama.cpp (Local Qwen3.8) → Edit** now shows the
+API key field plus *Customized settings* with Display name / Base URL /
+Model / Reasoning / Reasoning preset and the Fetch available models picker.
+Changed Reasoning preset to `low` and hit Apply — green saved notice
+appeared. Host-side evidence:
+
+```
+settings.describe:  revision 0 -> 2
+user layer:         {"reasoning":{"enabled":false,"preset":"low"}}   (written by the UI)
+value.reasoning:    {enabled:false, preset:"low", ...}               (live, no restart)
+secrets:            []                                               (key never in settings)
+settings.yaml:      llm-llamacpp: { reasoning: { enabled: false, preset: low } }
+credentials:        LLAMA_API_TOKEN source=env (untouched)
+```
+
+Restored afterwards with `settings.mutate` unset of `reasoning` (user layer
+empty again, `llm-llamacpp` section removed from settings.yaml).
+
 ## Issue-to-behavior map
 
 | Issue | Observable in the running instance |
