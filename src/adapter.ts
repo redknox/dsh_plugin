@@ -13,12 +13,15 @@
  */
 import {
   LlmAdapter,
+  isTokenDelta,
+  type FinishReason,
   type GenerateOptions,
   type LlmModelInfo,
   type LlmProviderInfo,
   type LlmResolvedModelInfo,
   type Message,
   type StreamChunk,
+  type TokenUsage,
 } from '@deepseek-ai/dsh-llm';
 import {
   LlamaCppClient,
@@ -37,6 +40,11 @@ import {
   type ReliabilityEndpoint,
 } from './reliability.ts';
 import { serializeRequest } from './serialize.ts';
+import {
+  NoopTelemetry,
+  newRequestId,
+  type TelemetrySink,
+} from './telemetry.ts';
 import { translate } from './translate.ts';
 
 /** The streaming surface an adapter needs from a transport client. */
@@ -63,6 +71,8 @@ export interface LlamacppAdapterDeps {
   readonly createClient?: (baseURL: string, options: LlamaCppClientOptions) => LlamaCppChatHandle;
   /** Optional debug logger (e.g. the plugin's `ctx.logger`) for policy decisions. */
   readonly logger?: LlamacppLogger;
+  /** Optional structured telemetry sink factory (issue #8); defaults to no-op. */
+  readonly telemetry?: () => TelemetrySink;
 }
 
 /** Rough prompt-size estimate in tokens (~4 chars/token) for policy context. */
@@ -178,17 +188,94 @@ export class LlamacppAdapter extends LlmAdapter {
       ...(auth !== undefined ? { auth } : {}),
     }));
     const createClient = this.deps.createClient ?? defaultCreateClient;
-    yield* translate(streamReliably(request, {
-      endpoints,
-      retryPolicy: opts.retryPolicy,
-      streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
-      ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
-      createClient,
-      pool: this.pool,
-      logger: this.deps.logger,
-      signal: options.signal,
-    }), {
-      emitReasoning: reasoning.emitThinking,
+
+    // Structured observability (issue #8): one trace per request from adapter
+    // entry through endpoint selection to the terminal result. The sink is
+    // per-operation so telemetry can be disabled without touching the adapter.
+    const sink = (this.deps.telemetry ?? (() => NoopTelemetry))();
+    const requestId = newRequestId();
+    const startedAt = Date.now();
+    sink.emit({
+      type: 'started',
+      requestId,
+      at: startedAt,
+      context: {
+        model: options.model,
+        ...(options.purpose !== undefined ? { purpose: options.purpose } : {}),
+        ...(reasoning.effort !== undefined ? { reasoningEffort: reasoning.effort } : {}),
+        ...(reasoning.budgetTokens !== undefined ? { reasoningBudgetTokens: reasoning.budgetTokens } : {}),
+        toolsAvailable: (options.tools?.length ?? 0) > 0,
+      },
     });
+
+    let retryCount = 0;
+    let fallbackCount = 0;
+    let lastEndpoint: string | undefined;
+    let ttftMs: number | undefined;
+    let chunkCount = 0;
+    let toolCallCount = 0;
+    let finish: FinishReason | undefined;
+    let usage: TokenUsage | undefined;
+
+    const finishWith = (failureCode?: string): void => {
+      const totalMs = Date.now() - startedAt;
+      sink.emit({
+        type: 'finished',
+        requestId,
+        at: startedAt + totalMs,
+        outcome: {
+          endpoint: lastEndpoint ?? opts.baseURL,
+          retryCount,
+          fallbackCount,
+          ...(ttftMs !== undefined ? { ttftMs } : {}),
+          totalMs,
+          ...(ttftMs !== undefined ? { completionMs: totalMs - ttftMs } : {}),
+          streamChunkCount: chunkCount,
+          ...(finish !== undefined ? { finishReason: finish } : {}),
+          ...(usage !== undefined ? { usage } : {}),
+          ...(toolCallCount > 0 ? { toolCallCount } : {}),
+          ...(failureCode !== undefined ? { failureCode } : {}),
+        },
+      });
+    };
+
+    try {
+      for await (const chunk of translate(streamReliably(request, {
+        endpoints,
+        retryPolicy: opts.retryPolicy,
+        streamIdleTimeoutMs: opts.streamIdleTimeoutMs,
+        ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
+        createClient,
+        pool: this.pool,
+        logger: this.deps.logger,
+        signal: options.signal,
+        onAttempt: (report) => {
+          lastEndpoint = report.baseURL;
+          if (report.outcome === 'retry') retryCount += 1;
+          else if (report.outcome === 'fallback') fallbackCount += 1;
+          sink.emit({ type: 'attempt', requestId, at: Date.now(), attempt: report });
+        },
+      }), {
+        emitReasoning: reasoning.emitThinking,
+      })) {
+        if (chunk.type === 'block-start' && chunk.blockType === 'tool-call') toolCallCount += 1;
+        if (chunk.type === 'usage') usage = chunk.usage;
+        if (chunk.type === 'finish') finish = chunk.reason;
+        if (isTokenDelta(chunk) && ttftMs === undefined) ttftMs = Date.now() - startedAt;
+        chunkCount += 1;
+        yield chunk;
+      }
+      finishWith();
+    } catch (error) {
+      finishWith(errorCodeOf(error));
+      throw error;
+    }
   }
+}
+
+/** Stable machine code of a thrown failure, when it has one. */
+function errorCodeOf(error: unknown): string | undefined {
+  if (error === null || typeof error !== 'object') return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
 }

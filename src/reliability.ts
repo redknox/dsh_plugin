@@ -38,6 +38,19 @@ export interface ReliabilityEndpoint {
   readonly auth?: LlamaCppAuth;
 }
 
+/**
+ * Per-attempt reliability report for observability (issue #8): the first
+ * attempt is `selected`; later attempts are `retry` (same endpoint) or
+ * `fallback` (different endpoint), carrying the failure code that triggered
+ * them. Emitted before each attempt begins.
+ */
+export interface AttemptReport {
+  readonly attempt: number;
+  readonly baseURL: string;
+  readonly outcome: 'selected' | 'retry' | 'fallback';
+  readonly failureCode?: string;
+}
+
 /** Per-attempt client factory (injected so tests can script fake endpoints). */
 export type ReliabilityClientFactory = (
   baseURL: string,
@@ -55,6 +68,8 @@ export interface ReliableStreamOptions {
   readonly logger?: LlamacppLogger;
   /** Optional persistent health pool; a per-call pool is used when absent. */
   readonly pool?: EndpointPool;
+  /** Optional per-attempt observability report (issue #8). */
+  readonly onAttempt?: (report: AttemptReport) => void;
   readonly signal?: AbortSignal;
 }
 
@@ -204,6 +219,17 @@ export async function* streamReliably(
       throw new LlmError('llama.cpp request aborted by caller', 'ABORTED');
     }
     const endpoint = pool.nextCandidate(endpoints, previous);
+    const outcome: AttemptReport['outcome'] = previous === undefined
+      ? 'selected'
+      : previous.baseURL === endpoint.baseURL
+        ? 'retry'
+        : 'fallback';
+    options.onAttempt?.({
+      attempt: attempts + 1,
+      baseURL: endpoint.baseURL,
+      outcome,
+      ...(outcome !== 'selected' && lastError !== undefined ? { failureCode: failureCode(lastError) } : {}),
+    });
     previous = endpoint;
     attempts++;
     const client = createClient(endpoint.baseURL, {

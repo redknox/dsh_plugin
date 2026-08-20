@@ -121,6 +121,41 @@ endpoint, or an empty `model`/`providerName` fails clearly. When the harness
 settings service is mounted, the same schema drives an `llm-llamacpp` settings
 section that can override any field without a restart.
 
+## Observability (issue #8)
+
+Optional structured request telemetry, emitted through a narrow sink (no
+Harness agent-loop coupling). `telemetry.enabled` defaults to `true` and emits
+one JSON line per event at `debug` level; set `false` to disable emission
+without changing provider behavior.
+
+One request is traced from adapter entry through endpoint selection to the
+terminal result via three event kinds (each carries the stable trace
+`requestId`):
+
+| event | fields | units / cardinality |
+|---|---|---|
+| `started` | `context: { model, purpose?, reasoningEffort?, reasoningBudgetTokens?, toolsAvailable }` | once per request |
+| `attempt` | `attempt: { attempt, baseURL, outcome: selected\|retry\|fallback, failureCode? }` | once per reliability attempt |
+| `finished` | `outcome: { endpoint, retryCount, fallbackCount, ttftMs?, totalMs, completionMs?, streamChunkCount, finishReason?, usage?, toolCallCount?, failureCode? }` | once per request |
+
+Metric semantics:
+
+- `ttftMs` — time to first user-visible token (text/reasoning/tool delta) from
+  adapter entry; `totalMs` — end-to-end latency; `completionMs` — derived
+  (`totalMs - ttftMs`).
+- `streamChunkCount` — Harness `StreamChunk` count; `toolCallCount` — streamed
+  tool-call blocks (tools are never executed by the provider).
+- `usage` — provider token accounting (input/output/reasoning/cache-read) when
+  llama.cpp exposes it; `finishReason` — terminal finish kind.
+- `retryCount` / `fallbackCount` — reliability layer outcomes; `failureCode` —
+  terminal failure code (`ABORTED`, `TIMEOUT`, `TRANSPORT`, …).
+
+Privacy rules (enforced structurally and tested): events carry field names and
+counts only — never prompt content, tool arguments, completions, API keys, or
+any request payload. Cardinality is bounded per request (≤ 1 + attempts + 1
+events); nothing is retained by the plugin itself (issue #12 adds a bounded
+in-memory diagnostic snapshot consuming this same surface).
+
 ## Reasoning (Qwen thinking)
 
 The provider exposes stable semantic levels (`off`, `low`, `medium`, `xhigh`)

@@ -28,6 +28,7 @@ import {
   type ConfigType,
   type ResolvedAdapterOptions,
 } from './config.ts';
+import { NoopTelemetry, logTelemetry, type TelemetrySink } from './telemetry.ts';
 
 export { Config, DEFAULT_PROVIDER_NAME, PLUGIN_NAME, PROVIDER, resolveAdapterOptions };
 export type { ConfigType, ResolvedAdapterOptions };
@@ -93,7 +94,11 @@ export function apply(ctx: Context, config: ConfigType): void {
     );
   };
 
-  const adapter = new LlamacppAdapter({ options, resolveApiKey, logger: ctx.logger });
+  // Structured telemetry (issue #8): enabled by default as structured debug
+  // log lines; `telemetry.enabled: false` disables emission without changing
+  // provider behavior. Re-read per operation so the toggle applies live.
+  const telemetry = (): TelemetrySink => (options().telemetry.enabled ? logTelemetry(ctx.logger) : NoopTelemetry);
+  const adapter = new LlamacppAdapter({ options, resolveApiKey, logger: ctx.logger, telemetry });
 
   ctx.llm.registerConfigurableProviders([
     {

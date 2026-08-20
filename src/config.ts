@@ -73,6 +73,11 @@ const ReasoningSchema = z.object({
   adaptive: AdaptiveSchema,
 });
 
+/** Structured observability toggle (issue #8). */
+const TelemetrySchema = z.object({
+  enabled: z.boolean().default(true),
+});
+
 /**
  * Plugin entry config. Every field is optional so the plugin loads with
  * llama.cpp's own defaults; `baseURL` still fails clearly when it is present
@@ -108,6 +113,8 @@ export const Config = z.object({
   endpoints: z.array(z.string()),
   /** Provider-owned retry policy (reliability layer, issue #7). */
   retryPolicy: RetryPolicySchema,
+  /** Structured request telemetry (issue #8); disable to stop emission. */
+  telemetry: TelemetrySchema,
   /** Semantic Qwen reasoning controls (presets + expert overrides). */
   reasoning: ReasoningSchema,
 });
@@ -131,6 +138,8 @@ export type ConfigType = {
   endpoints?: string[];
   /** Provider-owned retry policy (reliability layer, issue #7). */
   retryPolicy?: RetryPolicyConfig;
+  /** Structured request telemetry (issue #8). */
+  telemetry?: { enabled?: boolean };
   /** Semantic Qwen reasoning controls. */
   reasoning?: {
     enabled?: boolean;
@@ -163,6 +172,8 @@ export interface ResolvedAdapterOptions {
   readonly requestTimeoutMs?: number;
   /** Provider-owned retry policy captured at registration. */
   readonly retryPolicy: ResolvedRetryPolicy;
+  /** Structured request telemetry toggle (issue #8). */
+  readonly telemetry: { enabled: boolean };
   readonly reasoning: ReasoningPolicyConfig;
 }
 
@@ -249,6 +260,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     streamIdleTimeoutMs,
     ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
     retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-llamacpp: retryPolicy'),
+    telemetry: { enabled: config.telemetry?.enabled ?? true },
     reasoning,
   };
 }
