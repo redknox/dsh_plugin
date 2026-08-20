@@ -84,6 +84,33 @@ LLAMACPP_MODEL=/models/Qwen3.8-27B-Q8_0.gguf \
 LLAMA_API_TOKEN=<token> node examples/tool-call.mjs
 ```
 
+## 6. Settings surface (#13, exploratory)
+
+Issue #13 explored how far llama.cpp provider configuration can go through the
+existing DSH Settings UI without a custom front-end. Findings and design
+options live in `docs/exploration/settings-ui.md`; the repeatable smoke is:
+
+```bash
+cd /path/to/llm-llamacpp
+DSH_URL=http://127.0.0.1:3080 \
+LLAMACPP_BASE_URL=http://10.60.84.212:8040 \
+LLAMA_API_TOKEN=<token> node examples/settings-poc.mjs
+```
+
+The script drives the exact RPC surface the Settings GUI uses and restores the
+environment afterwards. Verified live against the running instance
+(2026-02-14, plugin commit `5f5a042` after a restart so the rebuilt plugin
+with `registerModelDiscovery` is loaded):
+
+| Check | Observed |
+|---|---|
+| `settings.describe` | `llm-llamacpp` registered, `applies: live`, `writable: true`, `secrets: []`, `reasoning.preset: medium` |
+| `settings.update` (`reasoning.preset: low`) | revision 0→1, persisted in `~/.dsh/settings.yaml`, re-describes as `low` with no restart |
+| `credentials.set` | POC ref → `source: file`; `LLAMA_API_TOKEN` → `source: env`; the secret never appears in `settings.yaml`; unset cleans up |
+| `llm.discoverModels` draft path | `{settingsNs: llm-llamacpp, baseURL, apiKey}` → `/models/Qwen3.8-27B-Q8_0.gguf` (`contextWindow: 204800` from `meta.n_ctx`) |
+| `llm.discoverModels` provider path | `{settingsNs, provider: llamacpp-local}` → same model, answered from adapter knowledge, no network call |
+| restore | `reasoning.preset` back to `medium`, user layer empty, no leftover sections |
+
 ## Issue-to-behavior map
 
 | Issue | Observable in the running instance |
@@ -100,3 +127,4 @@ LLAMA_API_TOKEN=<token> node examples/tool-call.mjs
 | #10 discovery | model catalog reflects the server; resolveModelInfo context |
 | #11 feedback | `reasoning.feedback.enabled` + feedback rationale in reasoning events |
 | #12 diagnostics | `examples/diagnostics.mjs` + `llm-llamacpp/diagnostics` ctx service |
+| #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm.discoverModels` for the `llm-llamacpp` namespace |
