@@ -137,19 +137,26 @@ instance and requires **zero front-end code**:
 
 ### Option A — upstream: generalize the Models page (deepseek-harness)
 
-**Status: validated as a patch prototype** (`upstream-poc/`). The prototype
-hard-codes a `llamacpp` family for our namespace; the upstream PR should
-instead generalize the unknown-family branch to render **any**
-configurable-provider namespace from its `settings.describe` schema +
-schemastery metadata (fields from the schema, credential field via the
-secrets slots, model picker via `llm.discoverModels` when a discovery is
-registered, submit enabled), keeping the deepseek/pi-ai branches as curated
-overrides. This benefits every third-party provider, not just ours.
+**Status: implemented as a source-level branch/PR candidate (issue #14).**
+The #13 prototype proved the shape; issue #14 replaced the hard-coded
+`llamacpp` family with a **generic schema-driven editor** in the DeepSeek
+Harness source tree: branch `feat/generic-provider-editor` (commit `d9f6013`),
+diff preserved in `upstream/generic-provider-editor.patch` (see
+`upstream/README.md`). Any unknown configurable-provider namespace now
+renders its own `settings.describe` schema — strings, booleans, enum/union
+choices, numbers, simple nested objects — with the shared credential field,
+the discovery-backed `model` picker (falling back to plain text), and the
+existing `settings.mutate` + `credentials.set` write path; submit is enabled
+for unknown namespaces. Curated `deepseek`/`pi-ai` layouts remain explicit
+overrides. `llm-llamacpp` validates the generic path end-to-end (6 basic
+fields), and an unrelated synthetic provider fixture proves it is not
+llama.cpp-specific. 8 new tests + 2 updated; 230 green.
 
-- Pros: the only path that makes the GUI fully usable for llama.cpp; upstream
-  value for all providers.
-- Cons: lives in the harness repo (out of this plugin's control); needs
-  schemastery metadata discipline from providers.
+- Pros: the only path that makes the GUI fully usable for any third-party
+  provider; upstream value for all providers; the plugin no longer needs the
+  installed-bundle patch.
+- Cons: lives in the harness repo (out of this plugin's control) — the PR
+  must be accepted upstream; schemastery metadata discipline from providers.
 
 ### Option B — plugin-side: extend the Models page with a curated section
 
@@ -177,11 +184,9 @@ RPC recipes.
 
 ### Recommended sequence
 
-1. **Option A (upstream)** — small, high-leverage. The `upstream-poc/` patch
-   prototype already proves the shape on the running instance (hard-coded
-   `llamacpp` family); the upstream PR generalizes it into a schema-driven
-   editor for unknown namespaces, enabling submit and a discovery-backed
-   dropdown for every provider. Do it in deepseek-harness.
+1. **Option A (upstream)** — **done as a PR candidate** (`upstream/`). The
+   generic schema-driven editor is implemented and tested in the harness
+   source tree; the remaining step is submitting/landing the PR upstream.
 2. **Option C documentation** — ship the RPC recipes (this doc + the POC
    script) so operators have a repeatable path today.
 3. Only if A is rejected upstream, consider **Option B**.

@@ -1,0 +1,869 @@
+diff --git a/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
+new file mode 100644
+index 0000000..3a9a467
+--- /dev/null
++++ b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
+@@ -0,0 +1,395 @@
++/**
++ * Schema-driven editor for configurable providers the Models page has no
++ * curated family for (issue #14). Renders the provider's own
++ * `settings.describe` schema — strings, booleans, enum/union choices,
++ * numbers, and simple nested objects — inside the shared ProviderEditor card,
++ * so the credential field and the settings.mutate + credentials.set write
++ * path stay the single, unchanged mechanism for every provider.
++ *
++ * Unsupported schema constructs (arrays, dicts, transforms, heterogeneous
++ * unions, …) are surfaced explicitly with an "edit in settings.yaml" hint
++ * rather than being silently dropped on save: this editor never renders a
++ * control it cannot faithfully write, so a field it shows is always saved
++ * exactly as displayed, and a field it does not show is never deleted by a
++ * rebuild.
++ *
++ * A `model` string field gains an optional discovery-backed picker
++ * (`llm.discoverModels`, the seam providers register through
++ * `ctx.llm.registerModelDiscovery`). Discovery is strictly additive: on
++ * success the picked id fills the field; on failure or when no discovery is
++ * registered the plain text input remains fully usable.
++ */
++
++import { useState } from 'react'
++import type { ReactNode } from 'react'
++import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
++import type { SchemaNode } from '@deepseek-ai/dsh-client-ui-settings/client'
++import type { SettingsSchemaOperations } from './schema-operations.ts'
++import type { ProbeTarget } from './ModelListEditor.tsx'
++import { messageOf } from './store.ts'
++import type { en } from './locales.ts'
++import styles from './ModelsSection.module.css'
++
++/** Props of {@link GenericSchemaEditor}. */
++export interface GenericSchemaEditorProps {
++  /** Provider route id, sent with discovery probes. */
++  provider: string
++  /** The owning namespace view (schema, layers, secrets). */
++  namespace: SettingsNamespaceView
++  /** Settings-owned synchronous schema and immutable path operations. */
++  schema: SettingsSchemaOperations
++  /** Rehydrated schema node at the edited subtree. */
++  node: SchemaNode
++  /** Draft of the user-layer subtree this editor edits. */
++  draft: Record<string, unknown>
++  /** Replace the drafted subtree. */
++  setDraft: (updater: (current: Record<string, unknown>) => Record<string, unknown>) => void
++  /** Effective (layered) value of the edited subtree, for placeholders. */
++  fallback: unknown
++  /** Endpoint facts for the model fetch action, owned by the card. */
++  probe: ProbeTarget
++  /** Wire face the fetch action calls. */
++  api: Pick<IApiClient, 'llm'>
++  /** Disable every control (read-only deployment or a pending write). */
++  disabled: boolean
++  /** Section copy. */
++  t: (key: keyof typeof en) => string
++}
++
++/** Enum choices of a union-of-string-literals node, or undefined. */
++function enumChoices(field: SchemaNode): readonly string[] | undefined {
++  if (field.type !== 'union' || field.list === undefined) return undefined
++  const choices: string[] = []
++  for (const member of field.list) {
++    if (member.type !== 'const' || typeof member.value !== 'string') return undefined
++    choices.push(member.value)
++  }
++  return choices
++}
++
++/** Whether this schema node is one this editor can render faithfully. */
++function isEditableType(field: SchemaNode): boolean {
++  switch (field.type) {
++    case 'string':
++    case 'boolean':
++    case 'number':
++    case 'object':
++      return true
++    case 'union':
++      return enumChoices(field) !== undefined
++    default:
++      return false
++  }
++}
++
++/**
++ * One schema-driven field. Every control writes through `setNested` path ops
++ * so nested objects (e.g. a `reasoning` group) commit exactly like top-level
++ * ones, and clearing a value unsets the path instead of storing an empty
++ * placeholder.
++ */
++function FieldEditor(props: {
++  name: string
++  field: SchemaNode
++  path: readonly string[]
++  value: unknown
++  fallback: unknown
++  setNested: (path: readonly string[], value: unknown) => void
++  disabled: boolean
++  owner: GenericSchemaEditorProps
++}): ReactNode {
++  const { name, field, path, value, fallback, setNested, disabled, owner } = props
++  const { schema, probe, api, t } = owner
++  // The accessible name is the full dotted path so nested groups (e.g. a
++  // `reasoning` object) never collide with their top-level namesakes.
++  const ariaLabel = path.join('.')
++  const label = (
++    <span className={styles['fieldLabel']}>
++      {name}
++      {' '}
++      <span className={styles['modelCatalogMeta']}>
++        {field.meta.required === true ? t('genericRequired') : t('genericOptional')}
++      </span>
++    </span>
++  )
++  const placeholder = typeof fallback === 'string' && fallback.length > 0
++    ? fallback
++    : typeof field.meta.default === 'string'
++      ? field.meta.default
++      : ''
++
++  if (!isEditableType(field)) {
++    // Explicit, never silent: the field survives untouched in settings.yaml
++    // and the user is told where it lives.
++    return (
++      <div className={styles['field']}>
++        {label}
++        <p className={styles['advancedHint']}>{t('genericUnsupported')}</p>
++      </div>
++    )
++  }
++
++  if (field.type === 'string') {
++    const text = typeof value === 'string' ? value : ''
++    const editable = disabled || field.meta.disabled === true
++    const input = (
++      <input
++        className={styles['input']}
++        type="text"
++        value={text}
++        placeholder={placeholder}
++        aria-label={ariaLabel}
++        disabled={editable}
++        onChange={(event) => {
++          const next = event.target.value
++          setNested(path, next.length === 0 ? undefined : next)
++        }}
++      />
++    )
++    // A `model` field is the conventional seat for the discovery picker:
++    // harness model selectors all name it `model`. Discovery is additive —
++    // the text input above stays the source of truth and the fallback.
++    if (name === 'model') {
++      return (
++        <div className={styles['field']}>
++          {label}
++          {input}
++          <ModelPicker
++            probe={probe}
++            api={api}
++            t={t}
++            disabled={disabled}
++            onPick={(id) => { setNested(path, id) }}
++          />
++        </div>
++      )
++    }
++    return (
++      <div className={styles['field']}>
++        {label}
++        {input}
++      </div>
++    )
++  }
++
++  const choices = enumChoices(field)
++  if (choices !== undefined) {
++    const effective = typeof value === 'string' && choices.includes(value)
++      ? value
++      : typeof fallback === 'string' && choices.includes(fallback)
++        ? fallback
++        : typeof field.meta.default === 'string' && choices.includes(field.meta.default)
++          ? field.meta.default
++          : choices[0] ?? ''
++    return (
++      <div className={styles['field']}>
++        {label}
++        <select
++          className={`${styles['input']} ${styles['selectInput']}`}
++          value={effective}
++          aria-label={ariaLabel}
++          disabled={disabled || field.meta.disabled === true}
++          onChange={(event) => { setNested(path, event.target.value) }}
++        >
++          {choices.map(choice => <option key={choice} value={choice}>{choice}</option>)}
++        </select>
++      </div>
++    )
++  }
++
++  if (field.type === 'boolean') {
++    const effective = typeof value === 'boolean'
++      ? value
++      : typeof fallback === 'boolean'
++        ? fallback
++        : typeof field.meta.default === 'boolean'
++          ? field.meta.default
++          : true
++    return (
++      <div className={styles['field']}>
++        {label}
++        <select
++          className={`${styles['input']} ${styles['selectInput']}`}
++          value={effective ? 'enabled' : 'disabled'}
++          aria-label={ariaLabel}
++          disabled={disabled || field.meta.disabled === true}
++          onChange={(event) => { setNested(path, event.target.value === 'enabled') }}
++        >
++          <option value="enabled">Enabled</option>
++          <option value="disabled">Disabled</option>
++        </select>
++      </div>
++    )
++  }
++
++  if (field.type === 'number') {
++    const text = typeof value === 'number' ? String(value) : ''
++    const numeric = (raw: string): number | undefined => {
++      if (raw.trim().length === 0) return undefined
++      const parsed = Number(raw)
++      return Number.isFinite(parsed) ? parsed : undefined
++    }
++    return (
++      <div className={styles['field']}>
++        {label}
++        <input
++          className={styles['input']}
++          type="text"
++          inputMode="numeric"
++          value={text}
++          placeholder={typeof fallback === 'number' ? String(fallback) : String(field.meta.default ?? '')}
++          aria-label={ariaLabel}
++          disabled={disabled || field.meta.disabled === true}
++          onChange={(event) => { setNested(path, numeric(event.target.value)) }}
++        />
++      </div>
++    )
++  }
++
++  // field.type === 'object' (the editable branch is exhaustive above): recurse.
++  const children: ReactNode[] = []
++  for (const [childName, child] of Object.entries(field.dict ?? {})) {
++    if (child.meta.hidden === true) continue
++    const childValue = schema.getPath(value, [childName])
++    const childFallback = schema.getPath(fallback, [childName])
++    children.push(
++      <FieldEditor
++        key={childName}
++        name={childName}
++        field={child}
++        path={[...path, childName]}
++        value={childValue}
++        fallback={childFallback}
++        setNested={setNested}
++        disabled={disabled}
++        owner={owner}
++      />,
++    )
++  }
++  return (
++    <details className={styles['customized']} open={field.meta.collapse !== false}>
++      <summary className={styles['customizedSummary']}>{name}</summary>
++      <div className={styles['customizedBody']}>{children}</div>
++    </details>
++  )
++}
++
++/**
++ * Discovery-backed model picker, strictly additive: fetching asks the endpoint
++ * the form currently shows (including an unsaved base URL and key), and the
++ * reply is a list of ids the user picks from — never configuration written
++ * behind them. Failure (unreachable endpoint, no registered discovery, a
++ * rejected key) is shown next to the still-usable text field.
++ */
++function ModelPicker(props: {
++  probe: ProbeTarget
++  api: Pick<IApiClient, 'llm'>
++  t: (key: keyof typeof en) => string
++  disabled: boolean
++  onPick: (id: string) => void
++}): ReactNode {
++  const { probe, api, t, disabled, onPick } = props
++  const [busy, setBusy] = useState(false)
++  const [failure, setFailure] = useState<string | undefined>(undefined)
++  const [candidates, setCandidates] = useState<readonly { id: string }[] | undefined>(undefined)
++  const fetchModels = async (): Promise<void> => {
++    setBusy(true)
++    setFailure(undefined)
++    try {
++      const response = await api.llm.discoverModels({
++        settingsNs: probe.settingsNs,
++        ...probe.provider === undefined ? {} : { provider: probe.provider },
++        ...probe.baseURL === undefined || probe.baseURL.length === 0 ? {} : { baseURL: probe.baseURL },
++        ...probe.apiKey === undefined ? {} : { apiKey: probe.apiKey },
++      })
++      if (!response.result.ok) {
++        setFailure(response.result.error.message)
++        return
++      }
++      const found = response.result.value.models
++      if (found.length === 0) {
++        setFailure(t('fetchEmpty'))
++        return
++      }
++      setCandidates(found)
++    } catch (error) {
++      setFailure(messageOf(error))
++    } finally {
++      setBusy(false)
++    }
++  }
++  return (
++    <div className={styles['modelCatalog']}>
++      <div className={styles['modelListHead']}>
++        <span className={styles['modelCatalogTitle']}>{t('models')}</span>
++        <button
++          type="button"
++          className={styles['linkButton']}
++          disabled={disabled || busy}
++          onClick={() => { void fetchModels() }}
++        >
++          {busy ? t('fetching') : t('genericModelFetch')}
++        </button>
++      </div>
++      {candidates === undefined
++        ? null
++        : (
++          <ul className={styles['candidateList']}>
++            {candidates.map((candidate) => (
++              <li key={candidate.id} className={styles['candidate']}>
++                <button
++                  type="button"
++                  className={styles['candidateLabel']}
++                  disabled={disabled}
++                  onClick={() => {
++                    onPick(candidate.id)
++                    setCandidates(undefined)
++                  }}
++                >
++                  <span className={styles['candidateId']}>{candidate.id}</span>
++                </button>
++              </li>
++            ))}
++          </ul>
++        )}
++      {failure === undefined ? null : <p className={styles['error']}>{failure}</p>}
++    </div>
++  )
++}
++
++/**
++ * The schema-driven editor body: one field per schema key, in schema order,
++ * nested objects rendered as collapsible groups.
++ */
++export function GenericSchemaEditor(props: GenericSchemaEditorProps): ReactNode {
++  const { node, schema, draft, setDraft, fallback, disabled } = props
++  const setNested = (path: readonly string[], value: unknown): void => {
++    setDraft(current => value === undefined
++      ? schema.deletePath(current, path)
++      : schema.setPath(current, path, value))
++  }
++  if (node.type !== 'object') {
++    // A non-object section schema is not editable as fields; never drop it.
++    return <p className={styles['advancedHint']}>{props.t('genericUnsupported')}</p>
++  }
++  const fields: ReactNode[] = []
++  for (const [name, field] of Object.entries(node.dict ?? {})) {
++    if (field.meta.hidden === true) continue
++    const value = schema.getPath(draft, [name])
++    const layered = schema.getPath(fallback, [name])
++    fields.push(
++      <FieldEditor
++        key={name}
++        name={name}
++        field={field}
++        path={[name]}
++        value={value}
++        fallback={layered}
++        setNested={setNested}
++        disabled={disabled}
++        owner={props}
++      />,
++    )
++  }
++  return <>{fields}</>
++}
+diff --git a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
+index 4cc6091..ce92499 100644
+--- a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
++++ b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
+@@ -29,13 +29,17 @@ import {
+ } from './DeepSeekModelsEditor.tsx'
+ import { apiKeyFailure } from './apiKey.ts'
+ import { EditorFooter } from './EditorFooter.tsx'
++import { GenericSchemaEditor } from './GenericSchemaEditor.tsx'
+ import { ModelListEditor } from './ModelListEditor.tsx'
+ import { deriveKeyRef, messageOf, protocolChoices } from './store.ts'
+ import type { SettingsSchemaOperations } from './schema-operations.ts'
+ import type { en } from './locales.ts'
+ import styles from './ModelsSection.module.css'
+ 
+-/** Per-adapter-family curated field sets (unknown namespaces get the hint alone). */
++/**
++ * Per-adapter-family curated field sets; unknown namespaces render the
++ * schema-driven {@link GenericSchemaEditor} instead of the settings.yaml hint.
++ */
+ type EditorLayout = 'deepseek' | 'pi-ai' | 'unknown'
+ 
+ /** The public DeepSeek endpoint shown as the deepseek base-URL placeholder. */
+@@ -325,6 +329,27 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+ 
+   const keyLocked = keyState?.writable === false
+ 
++  /** The one field every provider card shares: the write-only API key input. */
++  const credentialField = (keyPlaceholder: string): ReactNode => (
++    <div className={styles['field']}>
++      <span className={styles['fieldLabel']}>{t('keyInput')}</span>
++      <input
++        className={styles['input']}
++        type="password"
++        autoComplete="off"
++        value={keyDraft}
++        placeholder={keyPlaceholder}
++        aria-label={t('keyInput')}
++        aria-invalid={shownKeyFailure !== undefined}
++        required={props.credentialRequired === true}
++        autoFocus={props.autoFocusCredential === true}
++        disabled={disabled || keyLocked}
++        onChange={(event) => { setKeyDraft(event.target.value) }}
++      />
++      {shownKeyFailure === undefined ? null : <p className={styles['error']}>{t(shownKeyFailure)}</p>}
++    </div>
++  )
++
+   /**
+    * The catalog beneath the user layer: what the composition entry pinned, or
+    * else the schema default that `resolve` would supply. The effective value
+@@ -370,23 +395,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+     }
+     return (
+       <>
+-        <div className={styles['field']}>
+-          <span className={styles['fieldLabel']}>{t('keyInput')}</span>
+-          <input
+-            className={styles['input']}
+-            type="password"
+-            autoComplete="off"
+-            value={keyDraft}
+-            placeholder={keyPlaceholder}
+-            aria-label={t('keyInput')}
+-            aria-invalid={shownKeyFailure !== undefined}
+-            required={props.credentialRequired === true}
+-            autoFocus={props.autoFocusCredential === true}
+-            disabled={disabled || keyLocked}
+-            onChange={(event) => { setKeyDraft(event.target.value) }}
+-          />
+-          {shownKeyFailure === undefined ? null : <p className={styles['error']}>{t(shownKeyFailure)}</p>}
+-        </div>
++        {credentialField(keyPlaceholder)}
+         {props.credentialOnly === true ? null : <details className={styles['customized']}>
+           <summary className={styles['customizedSummary']}>{t('customized')}</summary>
+           <div className={styles['customizedBody']}>
+@@ -491,7 +500,30 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+           </div>
+         )}
+       {layout === 'unknown'
+-        ? <p className={styles['advancedHint']}>{`${t('advancedHint')} (${namespace.ns})`}</p>
++        ? (
++          <>
++            {credentialField(keyLocked
++              ? t('keyEnvLocked')
++              : keyState?.configured === true && props.credentialRequired !== true
++                ? t('keyStored')
++                : t('keyPlaceholder'))}
++            {props.credentialOnly === true ? null : (
++              <GenericSchemaEditor
++                provider={props.provider}
++                namespace={namespace}
++                schema={schema}
++                node={node}
++                draft={draft}
++                setDraft={setDraft}
++                fallback={fallback}
++                probe={probe}
++                api={api}
++                disabled={disabled}
++                t={t}
++              />
++            )}
++          </>
++        )
+         : curatedFields(layout)}
+       {failure !== undefined ? <p className={styles['error']}>{failure}</p> : null}
+       {props.credentialOnly === true || modelFailure === undefined
+@@ -504,7 +536,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
+       <EditorFooter
+         t={t}
+         busy={busy}
+-        submitDisabled={disabled || layout === 'unknown'
++        submitDisabled={disabled
+           || (props.credentialOnly !== true && modelFailure !== undefined)
+           || shownKeyFailure !== undefined
+           || (props.credentialRequired === true && keyValue.length === 0)}
+diff --git a/packages/client/ui-settings-models/src/client/locales.ts b/packages/client/ui-settings-models/src/client/locales.ts
+index 856ef64..66a0d15 100644
+--- a/packages/client/ui-settings-models/src/client/locales.ts
++++ b/packages/client/ui-settings-models/src/client/locales.ts
+@@ -99,6 +99,10 @@ export const en = {
+   onboardingSave: 'Save and continue',
+   onboardingSaving: 'Saving…',
+   keyRequired: 'Enter an API key to continue.',
++  genericOptional: '(optional)',
++  genericRequired: '(required)',
++  genericUnsupported: 'This field type is not editable here; edit it in settings.yaml.',
++  genericModelFetch: 'Fetch from provider',
+ }
+ 
+ /** The settings.models namespace key union. */
+@@ -201,4 +205,8 @@ export const zh: { [Key in keyof typeof en]: string } = {
+   onboardingSave: '保存并继续',
+   onboardingSaving: '保存中…',
+   keyRequired: '请输入 API 密钥后继续。',
++  genericOptional: '（可选）',
++  genericRequired: '（必填）',
++  genericUnsupported: '此字段类型暂不支持在页面编辑，请在 settings.yaml 中修改。',
++  genericModelFetch: '从服务端获取',
+ }
+diff --git a/packages/client/ui-settings-models/tests/components.client.spec.tsx b/packages/client/ui-settings-models/tests/components.client.spec.tsx
+index 4948e12..902d891 100644
+--- a/packages/client/ui-settings-models/tests/components.client.spec.tsx
++++ b/packages/client/ui-settings-models/tests/components.client.spec.tsx
+@@ -995,12 +995,15 @@ describe('ModelsSection', () => {
+     fireEvent.change(pick, { target: { value: 'broken' } })
+     await screen.findByText(/unresolvable settings path/)
+     fireEvent.change(pick, { target: { value: 'plain' } })
++    // The unknown namespace renders its own schema as editable fields (a
++    // whole-section provider) or, for a subtree address that resolves to a
++    // field object, that object's fields — here the `note` profile field.
+     await waitFor(() => {
+-      expect(screen.getAllByText(content => content.includes(en.advancedHint)).length).toBeGreaterThan(0)
++      expect(screen.getByLabelText('note')).toBeInstanceOf(HTMLInputElement)
+     })
+-    // The hint-only card cannot apply anything, and offers no key field.
+-    expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(true)
+-    expect(screen.queryAllByLabelText(en.keyInput)).toHaveLength(0)
++    // The shared credential field stays available and the card can apply.
++    expect(screen.getByLabelText(en.keyInput)).toBeInstanceOf(HTMLInputElement)
++    expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(false)
+   })
+ 
+   it('surfaces a rejected settings write and never stores the key after it', async () => {
+diff --git a/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
+new file mode 100644
+index 0000000..256f14d
+--- /dev/null
++++ b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
+@@ -0,0 +1,297 @@
++// @vitest-environment jsdom
++/**
++ * Schema-driven generic provider editor (issue #14): unknown configurable
++ * providers render their own settings.describe schema as editable fields with
++ * the shared settings.mutate + credentials.set write path, unsupported
++ * constructs are surfaced explicitly, and the model field gains an optional
++ * discovery picker that degrades to plain text.
++ */
++import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import Schema from '@deepseek-ai/schemastery'
++import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
++import type { RpcResponse, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
++import { ModelsSection } from '../src/client/ModelsSection.tsx'
++import type { ModelsSectionProps } from '../src/client/ModelsSection.tsx'
++import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
++import { ModelsSettingsStore } from '../src/client/store.ts'
++import { en } from '../src/client/locales.ts'
++import { settingsSchema } from './settings-schema.client.ts'
++
++afterEach(cleanup)
++
++const t: ModelsSectionProps['t'] = key => en[key]
++
++/** The llama.cpp provider schema, as a third-party plugin would describe it. */
++const LlamacppConfig = Schema.object({
++  providerName: Schema.string().default('llama.cpp (Local Qwen3.8)'),
++  baseURL: Schema.string(),
++  model: Schema.string(),
++  apiKeyEnv: Schema.string().role('credential-ref'),
++  retries: Schema.number().step(1).min(0).default(3),
++  enabled: Schema.boolean().default(true),
++  preset: Schema.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
++  reasoning: Schema.object({
++    enabled: Schema.boolean().default(true),
++    preset: Schema.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
++  }),
++  // Unsupported constructs this editor must surface, never silently drop.
++  endpoints: Schema.array(Schema.string()),
++  anything: Schema.any(),
++})
++
++/** A wholly unrelated provider, proving the fallback is not llama.cpp-specific. */
++const SyntheticConfig = Schema.object({
++  displayName: Schema.string(),
++  enabled: Schema.boolean().default(false),
++  mode: Schema.union(['fast', 'slow']).default('fast'),
++  extra: Schema.dict(Schema.string()),
++})
++
++let nextRpc = 0
++function ok<T>(value: T): RpcResponse<T> {
++  return { rpcId: `r-${nextRpc++}` as never, result: { ok: true, value } }
++}
++function fail<T>(message: string, code: string): RpcResponse<T> {
++  return { rpcId: `r-${nextRpc++}` as never, result: { ok: false, error: { code, message, details: {} } as never } }
++}
++
++function namespaceView(ns: string, schema: Schema, value: Record<string, unknown>): SettingsNamespaceView {
++  return {
++    ns,
++    schema: JSON.parse(JSON.stringify(schema.toJSON())) as unknown,
++    value,
++    base: {},
++    user: {},
++    applies: 'live',
++    secrets: [],
++    revision: 0,
++  }
++}
++
++function scriptedFace(options: {
++  ns?: string
++  schema?: Schema
++  value?: Record<string, unknown>
++  provider?: string
++  discover?: ReturnType<typeof vi.fn>
++  mutate?: ReturnType<typeof vi.fn>
++  set?: ReturnType<typeof vi.fn>
++} = {}) {
++  const ns = options.ns ?? 'llm-llamacpp'
++  const provider = options.provider ?? 'llamacpp-local'
++  const value = options.value ?? { baseURL: 'http://10.0.0.1:8080', model: '/models/qwen.gguf' }
++  const namespace = namespaceView(ns, options.schema ?? LlamacppConfig, value)
++  const discover = options.discover ?? vi.fn(() => Promise.resolve(ok({ models: [] })))
++  const mutate = options.mutate ?? vi.fn(() => Promise.resolve(ok(namespace)))
++  const set = options.set ?? vi.fn(() => Promise.resolve(ok({})))
++  const face = {
++    llm: {
++      providers: vi.fn(() => Promise.resolve(ok({
++        providers: [{ provider, displayName: provider, settingsNs: ns, settingsPath: [], active: true }],
++      }))),
++      models: vi.fn(() => Promise.resolve(ok({ groups: [], failures: [] }))),
++      discoverModels: discover,
++    },
++    settings: {
++      describe: vi.fn(() => Promise.resolve(ok({ writable: true, namespaces: [namespace] }))),
++      update: vi.fn(),
++      replace: vi.fn(),
++      mutate,
++    },
++    credentials: {
++      describe: vi.fn((payload: { refs: string[] }) => Promise.resolve(ok({
++        credentials: Object.fromEntries(payload.refs.map(ref => [ref, { configured: false, writable: true }])),
++      }))),
++      set,
++      unset: vi.fn(),
++    },
++  }
++  return { face, discover, mutate, set, namespace }
++}
++
++type WireFace = ConstructorParameters<typeof ModelsSettingsStore>[0]
++
++interface MutateCall {
++  ns: string
++  expectedRevision?: number
++  ops: { op: string; path: string[]; value?: unknown }[]
++}
++
++function firstMutate(mutate: ReturnType<typeof vi.fn>): MutateCall {
++  const call = mutate.mock.calls[0]?.[0] as MutateCall | undefined
++  if (call === undefined) throw new Error('no settings write was recorded')
++  return call
++}
++
++async function mountSection(options: Parameters<typeof scriptedFace>[0] = {}) {
++  const scripted = scriptedFace(options)
++  const controller = new ModelsSettingsStore(
++    scripted.face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(scripted.face as never))
++  await controller.load()
++  const injected: ModelsSectionProps = {
++    controller,
++    useSnapshot: bindSnapshotSelector(controller.store),
++    api: scripted.face as never,
++    schema: settingsSchema,
++    t,
++  }
++  render(<ModelsSection {...injected} />)
++  return { ...scripted, controller }
++}
++
++/** Open the editor of one configured row (the generic card has no fold). */
++function openEditor(provider: string): void {
++  const row = screen.getByText(provider).closest('li')
++  if (row === null) throw new Error(`no row for ${provider}`)
++  const edit = [...row.querySelectorAll('button')].find(button => button.textContent === en.edit)
++  if (edit === undefined) throw new Error('no edit button')
++  fireEvent.click(edit)
++}
++
++describe('generic schema-driven provider editor (issue #14)', () => {
++  it('renders every supported primitive plus nested groups and keeps submit enabled', async () => {
++    const { mutate } = await mountSection()
++    openEditor('llamacpp-local')
++
++    // The credential field every card shares.
++    expect(screen.getByLabelText(en.keyInput)).toBeInstanceOf(HTMLInputElement)
++    // Strings render as text inputs named by their schema key.
++    for (const label of ['providerName', 'baseURL', 'model', 'apiKeyEnv']) {
++      expect(screen.getByLabelText(label)).toBeInstanceOf(HTMLInputElement)
++    }
++    // Booleans and enums render as selects.
++    expect(screen.getByLabelText('enabled')).toBeInstanceOf(HTMLSelectElement)
++    expect(screen.getByLabelText('preset')).toBeInstanceOf(HTMLSelectElement)
++    // The preset select offers the schema's union choices.
++    const preset = screen.getByLabelText('preset') as HTMLSelectElement
++    expect([...preset.options].map(option => option.value)).toEqual(['off', 'low', 'medium', 'xhigh'])
++    // Numbers render as numeric text inputs.
++    expect(screen.getByLabelText('retries')).toBeInstanceOf(HTMLInputElement)
++    // The nested reasoning group is a collapsible section with its own fields,
++    // addressed by their dotted paths so they never collide with the
++    // top-level namesakes.
++    expect(screen.getByLabelText('reasoning.enabled')).toBeInstanceOf(HTMLSelectElement)
++    expect(screen.getByLabelText('reasoning.preset')).toBeInstanceOf(HTMLSelectElement)
++    // Unsupported constructs are surfaced explicitly, never as editable fields.
++    expect(screen.getAllByText(en.genericUnsupported).length).toBeGreaterThan(0)
++    const submit = [...document.querySelectorAll('button')].find(button => button.textContent === en.apply)
++    expect(submit?.disabled).toBe(false)
++  })
++
++  it('saves a string edit as a minimal path op (no rebuild, no dropped fields)', async () => {
++    const { mutate } = await mountSection()
++    openEditor('llamacpp-local')
++
++    fireEvent.change(screen.getByLabelText('providerName'), { target: { value: 'Local Qwen' } })
++    fireEvent.click(screen.getByText(en.apply))
++    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
++    expect(firstMutate(mutate)).toMatchObject({
++      ns: 'llm-llamacpp',
++      expectedRevision: 0,
++      ops: [{ op: 'set', path: ['providerName'], value: 'Local Qwen' }],
++    })
++  })
++
++  it('saves enum and boolean choices', async () => {
++    const { mutate } = await mountSection()
++    openEditor('llamacpp-local')
++
++    fireEvent.change(screen.getByLabelText('preset'), { target: { value: 'low' } })
++    fireEvent.change(screen.getByLabelText('enabled'), { target: { value: 'disabled' } })
++    fireEvent.click(screen.getByText(en.apply))
++    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
++    // Path ops follow the draft's key order (the order fields were edited).
++    expect(firstMutate(mutate).ops).toEqual([
++      { op: 'set', path: ['preset'], value: 'low' },
++      { op: 'set', path: ['enabled'], value: false },
++    ])
++  })
++
++  it('saves fields inside a nested object as one subtree op (reasoning.enabled/preset)', async () => {
++    const { mutate } = await mountSection()
++    openEditor('llamacpp-local')
++
++    fireEvent.change(screen.getByLabelText('reasoning.enabled'), { target: { value: 'disabled' } })
++    fireEvent.change(screen.getByLabelText('reasoning.preset'), { target: { value: 'low' } })
++    fireEvent.click(screen.getByText(en.apply))
++    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
++    // The whole reasoning subtree travels as one path op, like the curated
++    // families' models arrays — minimal, and nothing outside the card is
++    // rebuilt or dropped.
++    expect(firstMutate(mutate).ops).toEqual([
++      { op: 'set', path: ['reasoning'], value: { enabled: false, preset: 'low' } },
++    ])
++  })
++
++  it('fills the model field from discovery and degrades to plain text on failure', async () => {
++    const discover = vi.fn(() => Promise.resolve(ok({ models: [{ id: '/models/qwen.gguf', contextWindow: 204800 }] })))
++    const { mutate } = await mountSection({ discover })
++    openEditor('llamacpp-local')
++
++    // Success: pick a candidate; the field is filled and saved.
++    fireEvent.click(screen.getByText(en.genericModelFetch))
++    await waitFor(() => { expect(screen.getByText('/models/qwen.gguf')).toBeDefined() })
++    fireEvent.click(screen.getByText('/models/qwen.gguf'))
++    fireEvent.click(screen.getByText(en.apply))
++    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
++    expect(firstMutate(mutate).ops).toEqual([{ op: 'set', path: ['model'], value: '/models/qwen.gguf' }])
++
++    // The probe carried the namespace and route, plus the shown base URL.
++    const probe = (discover.mock.calls[0]?.[0] as { settingsNs: string; provider: string; baseURL: string })
++    expect(probe).toMatchObject({ settingsNs: 'llm-llamacpp', provider: 'llamacpp-local', baseURL: 'http://10.0.0.1:8080' })
++  })
++
++  it('surfaces discovery failure next to a still-usable text field', async () => {
++    const discover = vi.fn(() => Promise.resolve(fail('no model discovery is registered for "llm-llamacpp"', 'NO_DISCOVERY')))
++    await mountSection({ discover })
++    openEditor('llamacpp-local')
++
++    fireEvent.click(screen.getByText(en.genericModelFetch))
++    await waitFor(() => { expect(screen.getByText(/no model discovery/)).toBeDefined() })
++    // The plain text input remains editable.
++    const input = screen.getByLabelText('model') as HTMLInputElement
++    fireEvent.change(input, { target: { value: 'manual-model' } })
++    expect(input.value).toBe('manual-model')
++  })
++
++  it('keeps the credential off the settings document (credentials.set only)', async () => {
++    const { mutate, set } = await mountSection()
++    openEditor('llamacpp-local')
++
++    // A settings field edit plus a key: the key must travel through the
++    // credentials seam, never as a settings op.
++    fireEvent.change(screen.getByLabelText('providerName'), { target: { value: 'Local Qwen' } })
++    const keyInput = screen.getByLabelText(en.keyInput) as HTMLInputElement
++    fireEvent.change(keyInput, { target: { value: 'sk-draft-secret' } })
++    fireEvent.click(screen.getByText(en.apply))
++    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
++    expect(set).toHaveBeenCalledWith({ ref: 'LLAMACPP_LOCAL_API_KEY', value: 'sk-draft-secret' })
++    const written = JSON.stringify(firstMutate(mutate).ops)
++    expect(written).not.toContain('sk-draft-secret')
++  })
++
++  it('renders and saves an unrelated configurable provider (not llama.cpp-specific)', async () => {
++    const { mutate } = await mountSection({
++      ns: 'llm-synthetic',
++      provider: 'synthetic-local',
++      schema: SyntheticConfig,
++      value: { displayName: 'Acme', enabled: true, mode: 'fast' },
++    })
++    openEditor('synthetic-local')
++
++    expect(screen.getByLabelText('displayName')).toBeInstanceOf(HTMLInputElement)
++    expect(screen.getByLabelText('enabled')).toBeInstanceOf(HTMLSelectElement)
++    expect(screen.getByLabelText('mode')).toBeInstanceOf(HTMLSelectElement)
++    // A dict construct is unsupported and surfaced, not silently dropped.
++    expect(screen.getAllByText(en.genericUnsupported).length).toBeGreaterThan(0)
++
++    fireEvent.change(screen.getByLabelText('mode'), { target: { value: 'slow' } })
++    fireEvent.click(screen.getByText(en.apply))
++    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
++    expect(firstMutate(mutate)).toMatchObject({
++      ns: 'llm-synthetic',
++      ops: [{ op: 'set', path: ['mode'], value: 'slow' }],
++    })
++  })
++})

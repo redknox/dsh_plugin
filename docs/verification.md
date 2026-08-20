@@ -175,6 +175,36 @@ exercised: picking the discovered model wrote it into the `model` user field
 (saved + re-displayed). Both overrides were then unset, leaving the user
 layer empty.
 
+## 8. Generic provider editor (issue #14, upstream branch)
+
+The #13 prototype is superseded by a **source-level generic editor** in the
+DeepSeek Harness tree (branch `feat/generic-provider-editor`, diff in
+`upstream/generic-provider-editor.patch`; see `upstream/README.md`). Unknown
+configurable-provider namespaces render their own `settings.describe` schema
+instead of the settings.yaml hint, with submit enabled.
+
+The running instance's bundle was replaced with the built artifact for live
+verification (the #13 llamacpp-family patch is removed — the generic editor
+covers it). After a restart, walk through:
+
+1. **Settings → Models → llama.cpp (Local Qwen3.8) → Edit** — the card now
+   renders the credential field plus schema-driven fields: `providerName`,
+   `baseURL`, `model` (with a discovery fetch button), `apiKeyEnv`,
+   `enabled`, `preset` (off/low/medium/xhigh), `retries`, and collapsible
+   groups for `reasoning` (`enabled`/`preset`), `discovery`, `diagnostics`,
+   `telemetry`, `retryPolicy`. Unsupported shapes (`endpoints`,
+   heterogeneous unions) show the explicit settings.yaml hint.
+2. Change e.g. `reasoning.preset` to `low` and Apply — green saved notice;
+   `settings.describe` shows the user-layer override and `secrets: []`
+   (key stays out of settings.yaml).
+3. Click **Fetch from provider** next to the model field — the discovered
+   `/models/Qwen3.8-27B-Q8_0.gguf` appears; picking it fills the model field.
+4. Revert overrides afterwards via the UI or `settings.mutate` unset.
+
+Verified in-suite by `tests/generic-editor.client.spec.tsx` (8 cases,
+including a synthetic non-llama.cpp provider) and the updated unknown-
+namespace cases in `components.client.spec.tsx` — 230 tests green.
+
 ## Issue-to-behavior map
 
 | Issue | Observable in the running instance |
@@ -192,3 +222,4 @@ layer empty.
 | #11 feedback | `reasoning.feedback.enabled` + feedback rationale in reasoning events |
 | #12 diagnostics | `examples/diagnostics.mjs` + `llm-llamacpp/diagnostics` ctx service |
 | #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm.discoverModels` for the `llm-llamacpp` namespace; Models-page UI PoC via `upstream-poc/` patch |
+| #14 generic provider editor | upstream branch `feat/generic-provider-editor` (`upstream/generic-provider-editor.patch`); the Models page edits `llm-llamacpp` through the schema-driven generic editor (no hard-coded family) |
