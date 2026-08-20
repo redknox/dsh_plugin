@@ -222,6 +222,19 @@ including master-switch controls and a synthetic non-llama.cpp provider) and
 the updated unknown-namespace cases in `components.client.spec.tsx` — 231
 tests green.
 
+### Semantic groups + field help — verified live (issue #19, restarted with the groups build)
+
+Walked through the running GUI: the llama.cpp card now shows the basic fields
+with human-readable labels and one-line help (Display name / Base URL / Model /
+Model family …) directly visible, and the **Reasoning / Reliability /
+Endpoints / Discovery / Diagnostics / Telemetry** groups start collapsed.
+Expanding **Reasoning** revealed its inner groups **Expert override /
+Adaptive budget / Feedback**, which also start collapsed (declared via the
+same `ui.collapsed` metadata) — each nesting level opens on click. Save
+behavior unchanged. Verified in-suite by `tests/generic-editor.client.spec.tsx`
+(12 cases incl. groups/collapse/help/fallback; 234 upstream green) and the
+plugin's schema serialization (9 collapsed markers).
+
 ## Issue-to-behavior map
 
 | Issue | Observable in the running instance |
