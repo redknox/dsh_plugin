@@ -83,13 +83,13 @@ const ReasoningSchema = z.object({
   /** Default semantic level when a request names none. */
   preset: z.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
   /** Explicit expert override surface; never rewrites the preset table. */
-  expert: ReasoningExpertSchema,
+  expert: ReasoningExpertSchema.extra('extra', { ui: { label: 'Expert override', collapsed: true } }),
   /** llama.cpp wire translation mode; `none` sends no reasoning wire fields (issue #18). */
   wire: z.union(['chat-template-kwargs', 'reasoning-fields', 'none']).default('none'),
   /** Optional adaptive budget adjustment from request context. */
-  adaptive: AdaptiveSchema,
+  adaptive: AdaptiveSchema.extra('extra', { ui: { label: 'Adaptive budget', collapsed: true } }),
   /** Optional feedback-informed budget adjustment (issue #11). */
-  feedback: FeedbackSchema,
+  feedback: FeedbackSchema.extra('extra', { ui: { label: 'Feedback', collapsed: true } }),
 });
 
 /** Structured observability toggle (issue #8). */
