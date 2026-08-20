@@ -18,6 +18,28 @@
     "cordis.patch.yml"
   ],
   "license": "MIT",
+  "author": "redknox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/redknox/dsh_plugin.git"
+  },
+  "homepage": "https://github.com/redknox/dsh_plugin#readme",
+  "bugs": {
+    "url": "https://github.com/redknox/dsh_plugin/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "llm",
+    "provider",
+    "llama.cpp",
+    "llamacpp",
+    "qwen",
+    "reasoning",
+    "dsh"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "npm run build:js && npm run build:types",
     "build:js": "esbuild src/index.ts --bundle --format=esm --platform=node --outfile=dist/index.js --external:@deepseek-ai/* --external:eventsource-parser --external:eventsource-parser/stream",
@@ -25,7 +47,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepare": "npm run build"
+    "prepare": "node -e \"require('node:fs').existsSync('dist/index.js') ? process.exit(0) : require('node:child_process').execSync('npm run build', { stdio: 'inherit' })\""
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

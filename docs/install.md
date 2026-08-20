@@ -1,9 +1,11 @@
-# Installing llm-llamacpp from Git (issue #15)
+# Installing llm-llamacpp (issue #15 Git, #17 tarball/npm)
 
 The repository is a DSH-native installable bundle: `package.json` declares
 `dsh.bundle.patch` and ships `cordis.patch.yml` (a thin layer mounting the
-plugin **by package name**), plus a self-contained `prepare` script that
-builds `dist/` from source at install time. No manual Cordis patch edits, no
+plugin **by package name**), plus an idempotent `prepare` script that builds
+`dist/` from source only when absent (VCS/Git installs). Prebuilt tarballs
+(and the future npm artifact) ship `dist/` already built. No manual Cordis
+patch edits, no
 absolute filesystem paths, no `node_modules` symlink hacks.
 
 ## Target user flow

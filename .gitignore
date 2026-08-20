@@ -4,3 +4,4 @@ coverage/
 .npm-cache/
 *.log
 .DS_Store
+*.tgz
