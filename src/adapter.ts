@@ -37,6 +37,11 @@ import {
   type DiscoveryOptions,
 } from './discovery.ts';
 import {
+  FeedbackHistory,
+  buildFeedbackPolicy,
+  type ReasoningFeedback,
+} from './feedback.ts';
+import {
   buildReasoningPolicy,
   reasoningEfforts,
   type ReasoningPolicyContext,
@@ -58,6 +63,7 @@ import { serializeRequest } from './serialize.ts';
 import {
   NoopTelemetry,
   newRequestId,
+  type RequestOutcome,
   type TelemetrySink,
 } from './telemetry.ts';
 import { translate } from './translate.ts';
@@ -92,6 +98,8 @@ export interface LlamacppAdapterDeps {
   readonly routing?: RoutingPolicy;
   /** Optional discovery factory (issue #10); defaults to the real probe client. */
   readonly discovery?: (baseURL: string, options: DiscoveryOptions) => EndpointDiscovery;
+  /** Optional feedback history (issue #11); defaults to a fresh bounded store. */
+  readonly history?: FeedbackHistory;
 }
 
 /** Rough prompt-size estimate in tokens (~4 chars/token) for policy context. */
@@ -150,6 +158,8 @@ export class LlamacppAdapter extends LlmAdapter {
   readonly deps: LlamacppAdapterDeps;
   /** Persistent endpoint health state across requests (reliability layer). */
   readonly pool: EndpointPool;
+  /** Bounded reasoning-outcome history (issue #11 feedback loop). */
+  readonly history: FeedbackHistory;
   /** Per-endpoint discovery managers (issue #10), cached for TTL persistence. */
   private readonly discoveryByUrl = new Map<string, EndpointDiscovery>();
 
@@ -157,6 +167,7 @@ export class LlamacppAdapter extends LlmAdapter {
     super();
     this.deps = deps;
     this.pool = new EndpointPool();
+    this.history = deps.history ?? new FeedbackHistory();
   }
 
   override providerInfo(provider: string): LlmProviderInfo {
@@ -319,35 +330,39 @@ export class LlamacppAdapter extends LlmAdapter {
     let toolCallCount = 0;
     let finish: FinishReason | undefined;
     let usage: TokenUsage | undefined;
+    let feedbackEnabled = false;
 
     const finishWith = (failureCode?: string): void => {
       const totalMs = Date.now() - startedAt;
-      sink.emit({
-        type: 'finished',
-        requestId,
-        at: startedAt + totalMs,
-        outcome: {
-          endpoint: lastEndpoint ?? 'unresolved',
-          retryCount,
-          fallbackCount,
-          ...(ttftMs !== undefined ? { ttftMs } : {}),
-          totalMs,
-          ...(ttftMs !== undefined ? { completionMs: totalMs - ttftMs } : {}),
-          streamChunkCount: chunkCount,
-          ...(finish !== undefined ? { finishReason: finish } : {}),
-          ...(usage !== undefined ? { usage } : {}),
-          ...(toolCallCount > 0 ? { toolCallCount } : {}),
-          ...(failureCode !== undefined ? { failureCode } : {}),
-        },
-      });
+      const outcome = {
+        endpoint: lastEndpoint ?? 'unresolved',
+        retryCount,
+        fallbackCount,
+        ...(ttftMs !== undefined ? { ttftMs } : {}),
+        totalMs,
+        ...(ttftMs !== undefined ? { completionMs: totalMs - ttftMs } : {}),
+        streamChunkCount: chunkCount,
+        ...(finish !== undefined ? { finishReason: finish } : {}),
+        ...(usage !== undefined ? { usage } : {}),
+        ...(toolCallCount > 0 ? { toolCallCount } : {}),
+        ...(failureCode !== undefined ? { failureCode } : {}),
+      };
+      sink.emit({ type: 'finished', requestId, at: startedAt + totalMs, outcome });
+      // Feedback loop (issue #11): record the bounded provider-observable
+      // outcome so the next reasoning decision can learn from it.
+      if (feedbackEnabled) {
+        this.history.record(feedbackFrom(outcome));
+      }
     };
 
     try {
       const opts = this.deps.options();
+      feedbackEnabled = opts.reasoning.feedback?.enabled === true;
       const context = policyContext(options, opts.reasoning.adaptive?.hints);
       // The adapter depends only on the inference-policy seam; it has no
-      // knowledge of whether the resolved policy is static or adaptive.
-      const reasoning = buildReasoningPolicy(opts.reasoning).resolve({
+      // knowledge of whether the resolved policy is static, adaptive, or
+      // feedback-informed.
+      const reasoning = buildFeedbackPolicy(opts.reasoning, this.history).resolve({
         effort: options.reasoningEffort,
         purpose: options.purpose,
         context,
@@ -441,4 +456,31 @@ function errorCodeOf(error: unknown): string | undefined {
   if (error === null || typeof error !== 'object') return undefined;
   const code = (error as { code?: unknown }).code;
   return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * Derive the bounded feedback record from a request outcome (issue #11).
+ * Provider-observable signals only: outcome class, failure code, retry/
+ * fallback use, reasoning tokens, latency, and finish reason. Tool-call
+ * retries execute outside the provider (Harness `ctx.tools`), so the provider
+ * cannot observe them and reports none.
+ */
+function feedbackFrom(outcome: RequestOutcome): ReasoningFeedback {
+  const failureCode = outcome.failureCode;
+  const kind: ReasoningFeedback['outcome'] = failureCode === 'TIMEOUT'
+    ? 'timeout'
+    : failureCode === 'ABORTED'
+      ? 'aborted'
+      : failureCode !== undefined
+        ? 'failure'
+        : 'success';
+  return {
+    outcome: kind,
+    ...(failureCode !== undefined ? { failureCode } : {}),
+    retried: outcome.retryCount > 0 || outcome.fallbackCount > 0,
+    toolCallRetried: false,
+    ...(outcome.usage?.reasoningTokens !== undefined ? { reasoningTokens: outcome.usage.reasoningTokens } : {}),
+    latencyMs: outcome.totalMs,
+    ...(outcome.finishReason !== undefined ? { finishReason: outcome.finishReason.kind } : {}),
+  };
 }

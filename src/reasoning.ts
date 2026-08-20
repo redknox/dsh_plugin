@@ -89,6 +89,17 @@ export interface ReasoningPolicyConfig {
   readonly wire: ReasoningWireMode;
   /** Optional adaptive budget adjustment (issue #6). */
   readonly adaptive?: AdaptiveReasoningConfig;
+  /** Optional feedback-informed budget adjustment (issue #11). */
+  readonly feedback?: FeedbackReasoningConfig;
+}
+
+/**
+ * Optional feedback mode (issue #11): layer recent provider outcomes onto the
+ * budget decision. Bounded by the adaptive min/max safety bounds; explicit
+ * per-request effort and expert budgets always win.
+ */
+export interface FeedbackReasoningConfig {
+  readonly enabled: boolean;
 }
 
 /**

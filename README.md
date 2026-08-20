@@ -196,6 +196,42 @@ Per-request routing uses **freshly cached** discovered facts (non-blocking —
 routing never stalls on a probe); the cache refreshes on metadata queries
 (`listModels`/`resolveModel`) with a bounded TTL and honors cancellation.
 
+### Adaptive reasoning feedback loop (issue #11)
+
+Optional: layer recent provider outcomes onto the budget decision. Enable
+under `reasoning.feedback`:
+
+```yaml
+reasoning:
+  preset: medium
+  adaptive:
+    enabled: true      # optional; feedback also layers over a static base
+  feedback:
+    enabled: true
+```
+
+Each completed request records a bounded provider-observable outcome (outcome
+class, failure code, retry/fallback use, reasoning token consumption, latency,
+finish reason — derived from the #8 telemetry outcome; tool-call retries
+execute outside the provider and are not observed). The history keeps a fixed
+window (default 20; oldest entries drop out, so stale failures decay and
+cannot permanently bias) and can be reset.
+
+Adjustment rules are deterministic and bounded:
+
+- heavy timeouts/aborts/failures → **reduce** the budget (thinking overruns);
+- reasoning consumption near the budget cap → **increase** it;
+- empty history → the request behaves exactly like the base static/adaptive
+  policy;
+- explicit per-request effort and expert `budgetTokens` always win (no
+  feedback adjustment);
+- the adjusted budget is clamped to the hard adaptive min/max safety bounds
+  from #6.
+
+The chosen budget and the feedback rationale ride the `reason` field of the
+`reasoning` telemetry event, so decisions stay inspectable through #8
+observability.
+
 ## Observability (issue #8)
 
 Optional structured request telemetry, emitted through a narrow sink (no

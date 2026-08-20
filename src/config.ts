@@ -60,6 +60,11 @@ const AdaptiveSchema = z.object({
   hints: z.array(z.string()),
 });
 
+/** Feedback-informed budget adjustment (issue #11). */
+const FeedbackSchema = z.object({
+  enabled: z.boolean().default(false),
+});
+
 /** Semantic reasoning configuration; wire translation happens in serialize.ts. */
 const ReasoningSchema = z.object({
   /** Master thinking switch; `false` advertises and allows only `off`. */
@@ -72,6 +77,8 @@ const ReasoningSchema = z.object({
   wire: z.union(['chat-template-kwargs', 'reasoning-fields']).default('chat-template-kwargs'),
   /** Optional adaptive budget adjustment from request context. */
   adaptive: AdaptiveSchema,
+  /** Optional feedback-informed budget adjustment (issue #11). */
+  feedback: FeedbackSchema,
 });
 
 /** Structured observability toggle (issue #8). */
@@ -184,6 +191,8 @@ export type ConfigType = {
       maxBudgetTokens?: number;
       hints?: string[];
     };
+    /** Feedback-informed budget adjustment (issue #11). */
+    feedback?: { enabled?: boolean };
   };
 };
 
@@ -279,6 +288,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
   const endpoints = endpointProfiles.map((profile) => profile.baseURL);
   const reasoningRaw = config.reasoning ?? {};
   const adaptiveRaw = reasoningRaw.adaptive;
+  const feedbackRaw = reasoningRaw.feedback;
   const reasoning: ReasoningPolicyConfig = {
     enabled: reasoningRaw.enabled ?? true,
     preset: reasoningRaw.preset ?? 'medium',
@@ -295,6 +305,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
           },
         }
       : {}),
+    ...(feedbackRaw !== undefined ? { feedback: { enabled: feedbackRaw.enabled ?? false } } : {}),
   };
   validateReasoningConfig(reasoning, 'llm-llamacpp: reasoning');
   return {
