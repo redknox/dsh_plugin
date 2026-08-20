@@ -32,10 +32,15 @@ export interface ReasoningFeedback {
   readonly outcome: FeedbackOutcome;
   /** Terminal failure code when the request did not complete normally. */
   readonly failureCode?: string;
-  /** Whether the request used retry/fallback. */
+  /** Whether the request used provider-side retry/fallback. */
   readonly retried: boolean;
-  /** Whether a tool call was retried (provider-observable; tools run outside the provider). */
-  readonly toolCallRetried: boolean;
+  /**
+   * Whether a tool call was retried. Tri-state: ABSENT means the provider
+   * cannot observe it (tool execution/retry lives in Harness `ctx.tools`
+   * outside this provider), so it is never recorded as a known `false` —
+   * unknown is not negative evidence.
+   */
+  readonly toolCallRetried?: boolean;
   /** Reasoning tokens actually consumed, when the provider reported them. */
   readonly reasoningTokens?: number;
   /** Total request latency in ms. */
@@ -84,6 +89,11 @@ export class FeedbackHistory {
     this.entries.length = 0;
   }
 
+  /** Detached snapshot of the current window (for tests and diagnostics). */
+  snapshot(): readonly ReasoningFeedback[] {
+    return [...this.entries];
+  }
+
   /** Deterministic summary over the current window. */
   summarize(): FeedbackSummary {
     const count = this.entries.length;
@@ -101,7 +111,10 @@ export class FeedbackHistory {
       if (entry.outcome === 'timeout') timeouts += 1;
       else if (entry.outcome === 'aborted') aborted += 1;
       else if (entry.outcome === 'failure') failures += 1;
-      if (entry.retried || entry.toolCallRetried) retried += 1;
+      // Only KNOWN retry signals count: provider retry/fallback is always
+      // known; tool-call retry counts only when explicitly observed (true).
+      // An absent (unknown) toolCallRetried is not negative evidence.
+      if (entry.retried || entry.toolCallRetried === true) retried += 1;
       if (entry.reasoningTokens !== undefined) {
         reasoningTokensTotal += entry.reasoningTokens;
         reasoningTokensSeen += 1;

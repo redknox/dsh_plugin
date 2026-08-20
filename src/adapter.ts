@@ -463,7 +463,8 @@ function errorCodeOf(error: unknown): string | undefined {
  * Provider-observable signals only: outcome class, failure code, retry/
  * fallback use, reasoning tokens, latency, and finish reason. Tool-call
  * retries execute outside the provider (Harness `ctx.tools`), so the provider
- * cannot observe them and reports none.
+ * cannot observe them: the field is deliberately OMITTED (unknown), never
+ * recorded as a known `false`.
  */
 function feedbackFrom(outcome: RequestOutcome): ReasoningFeedback {
   const failureCode = outcome.failureCode;
@@ -478,7 +479,6 @@ function feedbackFrom(outcome: RequestOutcome): ReasoningFeedback {
     outcome: kind,
     ...(failureCode !== undefined ? { failureCode } : {}),
     retried: outcome.retryCount > 0 || outcome.fallbackCount > 0,
-    toolCallRetried: false,
     ...(outcome.usage?.reasoningTokens !== undefined ? { reasoningTokens: outcome.usage.reasoningTokens } : {}),
     latencyMs: outcome.totalMs,
     ...(outcome.finishReason !== undefined ? { finishReason: outcome.finishReason.kind } : {}),

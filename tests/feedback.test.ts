@@ -28,7 +28,6 @@ function feedback(partial: Partial<ReasoningFeedback> = {}): ReasoningFeedback {
   return {
     outcome: 'success',
     retried: false,
-    toolCallRetried: false,
     latencyMs: 1000,
     ...partial,
   };
@@ -79,6 +78,16 @@ describe('FeedbackHistory', () => {
     expect(summary.timeoutRatio).toBe(0.25);
     expect(summary.retriedRatio).toBe(0.5);
     expect(summary.avgReasoningTokens).toBe(2000);
+  });
+
+  it('counts tool-call retries only when explicitly observed, never as negative evidence (review regression)', () => {
+    const history = new FeedbackHistory();
+    // Provider cannot observe tool retries: the field is absent (unknown).
+    history.record(feedback({ outcome: 'success' }));
+    history.record(feedback({ outcome: 'success', toolCallRetried: true })); // future explicit signal
+    const summary = history.summarize();
+    // Only the explicitly-true entry counts; the unknown one is not false.
+    expect(summary.retriedRatio).toBe(0.5);
   });
 });
 
@@ -211,6 +220,30 @@ describe('adapter feedback loop integration', () => {
     });
     await collect(adapter.stream(baseOptions));
     expect(adapter.history.size).toBe(0);
+  });
+
+  it('omits the unobservable toolCallRetried field from adapter feedback (review regression)', async () => {
+    const options = resolveAdapterOptions({
+      baseURL: 'http://127.0.0.1:8080',
+      reasoning: { preset: 'medium', feedback: { enabled: true } },
+    });
+    const requests: LlamaCppChatCompletionRequest[] = [];
+    const adapter = new LlamacppAdapter({
+      options: () => options,
+      resolveApiKey: async () => undefined,
+      createClient: vi.fn(() => clientWithReasoningUsage(0, requests)),
+    });
+    await collect(adapter.stream(baseOptions));
+    expect(adapter.history.size).toBe(1);
+    const [recorded] = adapter.history.snapshot();
+    expect(recorded).toBeDefined();
+    if (recorded === undefined) return;
+    // Tool execution lives outside the provider: the field is absent (unknown),
+    // never recorded as a known `false`.
+    expect(recorded.toolCallRetried).toBeUndefined();
+    expect(recorded.retried).toBe(false);
+    // Unknown tool retry is not negative evidence in the summary.
+    expect(adapter.history.summarize().retriedRatio).toBe(0);
   });
 
   it('applies a seeded timeout-heavy history to the next request budget', async () => {
