@@ -1,5 +1,8 @@
 # llm-llamacpp
 
+[![npm version](https://img.shields.io/npm/v/llm-llamacpp)](https://www.npmjs.com/package/llm-llamacpp)
+[![license](https://img.shields.io/npm/l/llm-llamacpp)](https://github.com/redknox/dsh_plugin/blob/main/LICENSE)
+
 > **A production-oriented llama.cpp LLM provider for DeepSeek Harness, with
 > first-class Qwen reasoning support**, streaming tool calls, adaptive
 > inference policies, multi-endpoint reliability, capability-aware routing,
@@ -22,11 +25,13 @@ The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** Issues #1-#15 implemented, approved, and validated end-to-end
+> **Status.** Issues #1-#19 implemented, approved, and validated end-to-end
 > against a real llama.cpp server running the Qwen3.8 family: text streaming
 > with reasoning, parallel tool calls, reasoning off/on and both wire modes,
 > multi-endpoint fallback on real network failures, model/capability
-> discovery, diagnostics, and the DSH-native Git install path.
+> discovery, diagnostics, model-family compatibility profiles, the DSH
+> schema-driven generic settings editor, and the full install path —
+> **published on npm as `llm-llamacpp@0.1.0`**.
 
 ## Requirements
 
@@ -40,43 +45,32 @@ DeepSeek Harness as a Cordis plugin and registers itself through the public
 
 ## Installation
 
-Build the plugin:
+The package is a DSH-native installable bundle (declares `dsh.bundle`), so it
+installs through the official `dsh plugin` mechanism — no manual patch edits,
+no absolute paths, no `node_modules` symlinks. Pick one:
+
+**Option 1 — npm registry (recommended; `llm-llamacpp` is published):**
 
 ```bash
-cd /path/to/llm-llamacpp
-npm install
-npm run build
+dsh plugin --profile web add llm-llamacpp
 ```
 
-When mounting into a running harness, keep a **single copy** of the shared
-`@deepseek-ai/*` packages so the plugin shares identity with the host
-(`LlmAdapter`/`LlmError`/Cordis instances must be the host's). Point the
-plugin's dependency directory at the harness install's copies:
+**Option 2 — exact Git commit** (source build; pnpm ≥ 10 needs a one-time
+`allowBuilds` step — see `docs/install.md`):
 
 ```bash
-# <harness-install>/node_modules is the directory containing @deepseek-ai/
-ln -s <harness-install>/node_modules/@deepseek-ai node_modules/@deepseek-ai
+dsh plugin --profile web add github:redknox/dsh_plugin#<commit-sha>
 ```
 
-Mount it in the web profile's patch layer (`~/.dsh/profiles/web/cordis.patch.yml`
-or the equivalent patch file of your profile). New plugins are added with an
-`insert` patch entry:
+**Option 3 — prebuilt tarball** (no build authorization):
 
-```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
-- insert:
-    - id: llm-llamacpp
-      name: /absolute/path/to/llm-llamacpp/dist/index.js
-      config:
-        baseURL: http://10.60.84.212:8040   # llama.cpp OpenAI-compatible base URL
-        model: /models/Qwen3.8-27B-Q8_0.gguf # exact id from the server's /v1/models
-        providerName: llama.cpp (Local)      # name shown in model selectors
-        apiKeyEnv: LLAMA_API_TOKEN           # credential reference, not the key itself
-        # ... optional keys below (all optional) ...
+```bash
+dsh plugin --profile web add ./llm-llamacpp-0.1.0.tgz
 ```
 
-The harness watches the patch file (Cordis HMR) and mounts the plugin live —
-no restart needed. Verify it is registered:
+All three register the bundle automatically (`dsh.profile.bundles` gains
+`llm-llamacpp`), mount the plugin by package name, and share the host's
+Harness/Cordis runtime identity. Verify it is registered:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3080/api/llm.providers \
@@ -88,7 +82,13 @@ curl -s -X POST http://127.0.0.1:3080/api/llm.providers \
 Then select **the provider/model in the web GUI's model selector** and chat.
 The `model` value is passed to the wire verbatim; the plugin registers the
 `llamacpp-local` provider route and the configurable-provider directory entry
-`llamacpp-local@llm-llamacpp`.
+`llamacpp-local@llm-llamacpp`. Edit connection details later in the web GUI's
+**Settings → Models** page (or via `~/.dsh/profiles/<name>/cordis.patch.yml`).
+
+> **Developing from source** — clone the repo, `npm install && npm run build`,
+> and mount `dist/index.js` by path in the profile patch; keep a single copy
+> of the shared `@deepseek-ai/*` packages so the plugin shares identity with
+> the host (see `docs/install.md`).
 
 ## Configuration
 
