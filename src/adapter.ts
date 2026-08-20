@@ -40,8 +40,10 @@ import {
   type ReliabilityEndpoint,
 } from './reliability.ts';
 import {
+  CapabilityRoutingPolicy,
   deriveWorkload,
   routeEndpoints,
+  type RoutingPolicy,
   type RoutingRequest,
 } from './routing.ts';
 import { serializeRequest } from './serialize.ts';
@@ -78,6 +80,8 @@ export interface LlamacppAdapterDeps {
   readonly logger?: LlamacppLogger;
   /** Optional structured telemetry sink factory (issue #8); defaults to no-op. */
   readonly telemetry?: () => TelemetrySink;
+  /** Optional routing policy (issue #9); defaults to capability routing. */
+  readonly routing?: RoutingPolicy;
 }
 
 /** Rough prompt-size estimate in tokens (~4 chars/token) for policy context. */
@@ -109,6 +113,9 @@ function policyContext(
 function defaultCreateClient(baseURL: string, options: LlamaCppClientOptions): LlamaCppChatHandle {
   return new LlamaCppClient(baseURL, options);
 }
+
+/** Default routing policy: capability filtering + deterministic ordering. */
+const defaultRoutingPolicy: RoutingPolicy = new CapabilityRoutingPolicy();
 
 /**
  * Adapter for the `llamacpp-local` provider route. One instance serves every
@@ -263,7 +270,10 @@ export class LlamacppAdapter extends LlmAdapter {
         workload: deriveWorkload(options.purpose, reasoning.enabled),
         ...(context.estimatedPromptTokens !== undefined ? { estimatedPromptTokens: context.estimatedPromptTokens } : {}),
       };
-      const routing = routeEndpoints(routingRequest, opts.endpointProfiles);
+      // The adapter depends only on the routing-policy seam; it has no
+      // knowledge of the capability-filtering implementation.
+      const routingPolicy = this.deps.routing ?? defaultRoutingPolicy;
+      const routing = routingPolicy.route(routingRequest, opts.endpointProfiles);
       sink.emit({
         type: 'routing',
         requestId,

@@ -96,6 +96,24 @@ function workloadRank(profile: EndpointRoutingProfile, request: RoutingRequest):
 }
 
 /**
+ * The routing-policy seam (issue #9, review): a policy turns one request plus
+ * the configured endpoint profiles into a deterministic candidate order,
+ * independent of the retry/fallback policy (#7) and of the reasoning policy
+ * (#6). The adapter depends only on this interface, so routing can be
+ * replaced or extended without modifying adapter code.
+ */
+export interface RoutingPolicy {
+  route(request: RoutingRequest, profiles: readonly EndpointRoutingProfile[]): RoutingDecision;
+}
+
+/** Default policy: capability filtering + deterministic ordering. */
+export class CapabilityRoutingPolicy implements RoutingPolicy {
+  route(request: RoutingRequest, profiles: readonly EndpointRoutingProfile[]): RoutingDecision {
+    return routeEndpoints(request, profiles);
+  }
+}
+
+/**
  * Route one request over the configured endpoint profiles. Deterministic for
  * the same inputs: eligibility filters first (exact model compatibility,
  * context window, tool/reasoning requirements), then candidates are ordered

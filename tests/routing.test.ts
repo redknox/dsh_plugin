@@ -9,9 +9,11 @@ import { LlmError, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { LlamacppAdapter, type LlamaCppChatHandle } from '../src/adapter.ts';
 import { resolveAdapterOptions } from '../src/config.ts';
 import {
+  CapabilityRoutingPolicy,
   deriveWorkload,
   routeEndpoints,
   type EndpointRoutingProfile,
+  type RoutingPolicy,
   type RoutingRequest,
 } from '../src/routing.ts';
 import type { TelemetryEvent, TelemetrySink } from '../src/telemetry.ts';
@@ -192,5 +194,35 @@ describe('routing through the adapter', () => {
     if (routing?.type !== 'routing') return;
     expect(routing.decision.candidates).toEqual(['http://b']);
     expect(routing.decision.rationale.some((r) => r.includes('http://a: excluded'))).toBe(true);
+  });
+
+  it('honors an injected custom RoutingPolicy without changing adapter code (review regression)', async () => {
+    // A policy that reverses the configured order; the adapter must follow it.
+    const customPolicy: RoutingPolicy = {
+      route(request, profiles) {
+        return {
+          candidates: [...profiles].reverse().map((p) => p.baseURL),
+          rationale: [`custom reversed order for ${request.model}`],
+        };
+      },
+    };
+    const options = resolveAdapterOptions({
+      endpoints: ['http://a', 'http://b'],
+      retryPolicy: { mode: 'normal', maxRetries: 2 },
+    });
+    const createClient = vi.fn((baseURL: string) => (
+      baseURL === 'http://b' ? failClient('TRANSPORT') : okClient()
+    ));
+    const adapter = new LlamacppAdapter({
+      options: () => options,
+      resolveApiKey: async () => undefined,
+      createClient,
+      routing: customPolicy,
+    });
+    const { chunks, error } = await collect(adapter.stream(baseOptions));
+    expect(error).toBeUndefined();
+    // Custom order [b, a]: b fails, reliability falls back to a.
+    expect(createClient.mock.calls.map((c) => c[0])).toEqual(['http://b', 'http://a']);
+    expect(chunks.some((c) => c.type === 'text-delta')).toBe(true);
   });
 });
