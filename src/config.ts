@@ -67,8 +67,14 @@ const FeedbackSchema = z.object({
 
 /** Semantic reasoning configuration; wire translation happens in serialize.ts. */
 const ReasoningSchema = z.object({
-  /** Master thinking switch; `false` advertises and allows only `off`. */
-  enabled: z.boolean().default(true),
+  /**
+   * Master thinking switch; `false` advertises and allows only `off`.
+   * `.extra('extra', {controls: [...]})` is a generic schema-level hint
+   * consumed by the DSH Models-page generic provider editor (upstream issue
+   * #14): it disables the named sibling fields while this switch is off, so
+   * the UI never offers a preset the adapter would ignore.
+   */
+  enabled: z.boolean().default(true).extra('extra', { controls: ['preset'] }),
   /** Default semantic level when a request names none. */
   preset: z.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
   /** Explicit expert override surface; never rewrites the preset table. */

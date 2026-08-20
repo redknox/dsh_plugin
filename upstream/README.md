@@ -19,7 +19,11 @@ Branch `feat/generic-provider-editor` in `deepseek-ai/deepseek-harness`
   with an "edit in settings.yaml" hint and are never rebuilt or dropped by a
   save. A `model` string field gains an optional discovery-backed picker
   (`llm.discoverModels`) that degrades to the plain text input when
-  discovery is unavailable or fails.
+  discovery is unavailable or fails. **Master-switch controls**: a boolean
+  field declared with Schemastery's typed `.extra('extra', {controls:
+  ['sibling', …]})` metadata disables those sibling fields while it is off
+  (e.g. `reasoning.enabled` → `['preset']`) — schema-driven, usable by any
+  provider, never a hard-coded family rule.
 - **`ProviderEditor.tsx`** — unknown namespaces now render the shared
   credential field plus the generic editor, and submit is no longer disabled
   for them. Writes stay on the existing `settings.mutate` path-ops +
@@ -27,12 +31,13 @@ Branch `feat/generic-provider-editor` in `deepseek-ai/deepseek-harness`
   semantics are unchanged. Curated `deepseek`/`pi-ai` layouts are untouched.
 - **`locales.ts`** — `genericOptional` / `genericRequired` /
   `genericUnsupported` / `genericModelFetch` (en + zh).
-- **Tests** — `tests/generic-editor.client.spec.tsx` (8 cases: render of
+- **Tests** — `tests/generic-editor.client.spec.tsx` (9 cases: render of
   every supported primitive, minimal path-op saves, nested-object subtree
-  save, credential isolation via `credentials.set`, discovery success and
-  failure fallback, and an unrelated synthetic provider proving the fallback
-  is not llama.cpp-specific); two existing cases updated to the new
-  unknown-namespace behavior. Suite: 230 tests green.
+  save, master-switch controls, credential isolation via `credentials.set`,
+  discovery success and failure fallback, and an unrelated synthetic
+  provider proving the fallback is not llama.cpp-specific); two existing
+  cases updated to the new unknown-namespace behavior. Suite: 231 tests
+  green.
 
 ## How it validates llama.cpp (issue #14 tasks)
 

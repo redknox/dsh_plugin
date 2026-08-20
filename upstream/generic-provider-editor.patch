@@ -1,9 +1,9 @@
 diff --git a/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
 new file mode 100644
-index 0000000..3a9a467
+index 0000000..12cf413
 --- /dev/null
 +++ b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,434 @@
 +/**
 + * Schema-driven editor for configurable providers the Models page has no
 + * curated family for (issue #14). Renders the provider's own
@@ -86,6 +86,30 @@ index 0000000..3a9a467
 +    default:
 +      return false
 +  }
++}
++
++/**
++ * Sibling fields a boolean master switch disables while it is off, declared
++ * through Schemastery's generic `.extra('extra', {controls: [...]})`
++ * metadata. The mechanism is schema-driven, not provider-specific: any
++ * configurable provider can mark one boolean as controlling siblings (e.g.
++ * `reasoning.enabled` → `['preset']`), and the editor applies it.
++ */
++function controlsOf(field: SchemaNode): readonly string[] | undefined {
++  const extra = (field.meta as { extra?: unknown }).extra
++  if (typeof extra !== 'object' || extra === null) return undefined
++  const controls = (extra as { controls?: unknown }).controls
++  return Array.isArray(controls) && controls.every((entry) => typeof entry === 'string')
++    ? controls as string[]
++    : undefined
++}
++
++/** The effective boolean of a switch field, mirroring the boolean branch. */
++function effectiveBoolean(value: unknown, fallback: unknown, field: SchemaNode): boolean {
++  if (typeof value === 'boolean') return value
++  if (typeof fallback === 'boolean') return fallback
++  if (typeof field.meta.default === 'boolean') return field.meta.default
++  return true
 +}
 +
 +/**
@@ -253,6 +277,21 @@ index 0000000..3a9a467
 +  }
 +
 +  // field.type === 'object' (the editable branch is exhaustive above): recurse.
++  // Boolean master switches may declare `.extra('controls', [...])` — sibling
++  // field names they disable while off. Compute the effective switch values
++  // first, then the disabled targets, so nested rendering stays declarative.
++  const disabledTargets = new Set<string>()
++  for (const [childName, child] of Object.entries(field.dict ?? {})) {
++    if (child.type !== 'boolean') continue
++    const controls = controlsOf(child)
++    if (controls === undefined) continue
++    const on = effectiveBoolean(
++      schema.getPath(value, [childName]),
++      schema.getPath(fallback, [childName]),
++      child,
++    )
++    if (!on) for (const target of controls) disabledTargets.add(target)
++  }
 +  const children: ReactNode[] = []
 +  for (const [childName, child] of Object.entries(field.dict ?? {})) {
 +    if (child.meta.hidden === true) continue
@@ -267,7 +306,7 @@ index 0000000..3a9a467
 +        value={childValue}
 +        fallback={childFallback}
 +        setNested={setNested}
-+        disabled={disabled}
++        disabled={disabled || disabledTargets.has(childName)}
 +        owner={owner}
 +      />,
 +    )
@@ -566,10 +605,10 @@ index 4948e12..902d891 100644
    it('surfaces a rejected settings write and never stores the key after it', async () => {
 diff --git a/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
 new file mode 100644
-index 0000000..256f14d
+index 0000000..57a517e
 --- /dev/null
 +++ b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,312 @@
 +// @vitest-environment jsdom
 +/**
 + * Schema-driven generic provider editor (issue #14): unknown configurable
@@ -604,7 +643,7 @@ index 0000000..256f14d
 +  enabled: Schema.boolean().default(true),
 +  preset: Schema.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
 +  reasoning: Schema.object({
-+    enabled: Schema.boolean().default(true),
++    enabled: Schema.boolean().default(true).extra('extra', { controls: ['preset'] }),
 +    preset: Schema.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
 +  }),
 +  // Unsupported constructs this editor must surface, never silently drop.
@@ -841,6 +880,21 @@ index 0000000..256f14d
 +    expect(set).toHaveBeenCalledWith({ ref: 'LLAMACPP_LOCAL_API_KEY', value: 'sk-draft-secret' })
 +    const written = JSON.stringify(firstMutate(mutate).ops)
 +    expect(written).not.toContain('sk-draft-secret')
++  })
++
++  it('disables a switch-controlled sibling while the master switch is off', async () => {
++    await mountSection()
++    openEditor('llamacpp-local')
++
++    const preset = screen.getByLabelText('reasoning.preset') as HTMLSelectElement
++    expect(preset.disabled).toBe(false)
++    // `.extra('controls', ['preset'])` on reasoning.enabled: flipping the
++    // switch off locks the preset it would otherwise ignore.
++    fireEvent.change(screen.getByLabelText('reasoning.enabled'), { target: { value: 'disabled' } })
++    expect((screen.getByLabelText('reasoning.preset') as HTMLSelectElement).disabled).toBe(true)
++    // Flipping it back re-enables the sibling.
++    fireEvent.change(screen.getByLabelText('reasoning.enabled'), { target: { value: 'enabled' } })
++    expect((screen.getByLabelText('reasoning.preset') as HTMLSelectElement).disabled).toBe(false)
 +  })
 +
 +  it('renders and saves an unrelated configurable provider (not llama.cpp-specific)', async () => {

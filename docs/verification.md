@@ -196,14 +196,18 @@ covers it). After a restart, walk through:
    heterogeneous unions) show the explicit settings.yaml hint.
 2. Change e.g. `reasoning.preset` to `low` and Apply — green saved notice;
    `settings.describe` shows the user-layer override and `secrets: []`
-   (key stays out of settings.yaml).
+   (key stays out of settings.yaml). Setting `reasoning.enabled` to
+   `Disabled` locks the `preset` select — the linkage is declared by the
+   plugin through Schemastery metadata (`meta.extra.controls`) and applied
+   generically by the editor, not hard-coded per family.
 3. Click **Fetch from provider** next to the model field — the discovered
    `/models/Qwen3.8-27B-Q8_0.gguf` appears; picking it fills the model field.
 4. Revert overrides afterwards via the UI or `settings.mutate` unset.
 
-Verified in-suite by `tests/generic-editor.client.spec.tsx` (8 cases,
-including a synthetic non-llama.cpp provider) and the updated unknown-
-namespace cases in `components.client.spec.tsx` — 230 tests green.
+Verified in-suite by `tests/generic-editor.client.spec.tsx` (9 cases,
+including master-switch controls and a synthetic non-llama.cpp provider) and
+the updated unknown-namespace cases in `components.client.spec.tsx` — 231
+tests green.
 
 ## Issue-to-behavior map
 
