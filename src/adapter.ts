@@ -181,18 +181,40 @@ export class LlamacppAdapter extends LlmAdapter {
   }
 
   private discoveryFor(baseURL: string, auth?: LlamaCppAuth): EndpointDiscovery {
-    let discovery = this.discoveryByUrl.get(baseURL);
-    if (discovery === undefined) {
-      const opts = this.deps.options();
-      const create = this.deps.discovery ?? ((url: string, options: DiscoveryOptions) => new EndpointDiscovery(url, options));
-      discovery = create(baseURL, {
-        ...(opts.discovery.ttlMs !== undefined ? { ttlMs: opts.discovery.ttlMs } : {}),
-        ...(opts.discovery.timeoutMs !== undefined ? { timeoutMs: opts.discovery.timeoutMs } : {}),
-        ...(auth !== undefined ? { auth } : {}),
-      });
-      this.discoveryByUrl.set(baseURL, discovery);
+    const cached = this.discoveryByUrl.get(baseURL);
+    if (cached !== undefined && (auth === undefined || (cached.options.auth?.value ?? '') === auth.value)) {
+      // Reuse: no auth available now (sync cached-only paths like diagnostics
+      // must not recreate an already-authenticated cache), or the cached
+      // instance matches the requested auth.
+      return cached;
     }
+    // Auth differs from the cached instance (or no cache): (re)create with
+    // the requested auth so an early auth-less creation cannot poison later
+    // authenticated probes, and key rotation takes effect.
+    const opts = this.deps.options();
+    const create = this.deps.discovery ?? ((url: string, options: DiscoveryOptions) => new EndpointDiscovery(url, options));
+    const discovery = create(baseURL, {
+      ...(opts.discovery.ttlMs !== undefined ? { ttlMs: opts.discovery.ttlMs } : {}),
+      ...(opts.discovery.timeoutMs !== undefined ? { timeoutMs: opts.discovery.timeoutMs } : {}),
+      ...(auth !== undefined ? { auth } : {}),
+    });
+    this.discoveryByUrl.set(baseURL, discovery);
     return discovery;
+  }
+
+  /** Resolve the auth header defensively (metadata paths must not fail on a missing key). */
+  private async resolveAuth(): Promise<LlamaCppAuth | undefined> {
+    try {
+      const apiKey = await this.deps.resolveApiKey();
+      if (apiKey === undefined) return undefined;
+      const opts = this.deps.options();
+      return {
+        name: opts.apiKeyHeader,
+        value: opts.apiKeyHeader === 'authorization' ? `Bearer ${apiKey}` : apiKey,
+      };
+    } catch {
+      return undefined;
+    }
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
@@ -310,9 +332,10 @@ export class LlamacppAdapter extends LlmAdapter {
   /** Union of discovered model ids across configured endpoints (deduped). */
   private async discoveredModels(): Promise<readonly DiscoveredModel[]> {
     const opts = this.deps.options();
+    const auth = await this.resolveAuth();
     const byId = new Map<string, DiscoveredModel>();
     for (const profile of opts.endpointProfiles) {
-      const discovery = this.discoveryFor(profile.baseURL);
+      const discovery = this.discoveryFor(profile.baseURL, auth);
       const result = await discovery.discover(); // graceful: never throws
       for (const entry of result.models) {
         if (byId.has(entry.id)) continue;
@@ -324,8 +347,9 @@ export class LlamacppAdapter extends LlmAdapter {
 
   /** First discovered facts matching the model across endpoints. */
   private async findDiscovered(model: string, opts: ResolvedAdapterOptions): Promise<DiscoveredModel | undefined> {
+    const auth = await this.resolveAuth();
     for (const profile of opts.endpointProfiles) {
-      const discovery = this.discoveryFor(profile.baseURL);
+      const discovery = this.discoveryFor(profile.baseURL, auth);
       const result = await discovery.discover(); // graceful: never throws
       const match = result.models.find((entry) => entry.id === model);
       if (match !== undefined) return match;

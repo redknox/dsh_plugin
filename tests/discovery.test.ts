@@ -201,6 +201,30 @@ describe('discovery feeding the adapter', () => {
     expect((await cAdapter.resolveModel('llamacpp-local', 'qwen3')).context).toEqual({ contextWindow: 4096 });
   });
 
+  it('listModels passes auth to the discovery probes (authenticated server, review regression)', async () => {
+    const seen: string[] = [];
+    stubFetch((url, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      seen.push(`${url} => ${headers.authorization ?? 'no-auth'}`);
+      if (url.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'm1', meta: { n_ctx: 8192 } }] });
+      return jsonResponse({});
+    });
+    const options = resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3', apiKeyEnv: 'LLAMA_API_TOKEN', discovery: { enabled: true, ttlMs: 60_000 } });
+    const adapter = new LlamacppAdapter({
+      options: () => options,
+      resolveApiKey: async () => 'sekrit',
+      createClient: vi.fn(),
+    });
+    const models = await adapter.listModels('llamacpp-local');
+    expect(models.map((m) => m.id)).toEqual(['m1']);
+    // Every probe (health + models + props) carries the resolved auth.
+    expect(seen).toHaveLength(3);
+    expect(seen.every((line) => line.includes('Bearer sekrit'))).toBe(true);
+    // The discovered context window is also surfaced via resolveModel.
+    const info = await adapter.resolveModel('llamacpp-local', 'm1');
+    expect(info.context).toEqual({ contextWindow: 8192 });
+  });
+
   it('routes using freshly cached discovered capabilities (never blocks on probes)', async () => {
     stubFetch((url) => {
       if (url.includes('http://a') && url.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'qwen3', meta: { n_ctx: 512 } }] });
