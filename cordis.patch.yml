@@ -1,0 +1,8 @@
+# The llm-llamacpp bundle patch (issue #15): a thin layer that mounts the
+# provider by package name, so the package is installable through
+# `dsh plugin --profile <name> add github:redknox/dsh_plugin#<sha>` with no
+# absolute paths and no manual patch edits. Runtime defaults stay owned by
+# the plugin's own schema/config layer; this layer only names the plugin.
+- insert:
+    - id: llm-llamacpp
+      name: llm-llamacpp

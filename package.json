@@ -10,10 +10,12 @@
       "types": "./dist/types/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
-    "dist"
+    "dist",
+    "cordis.patch.yml"
   ],
   "license": "MIT",
   "scripts": {
@@ -22,7 +24,8 @@
     "build:types": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "pnpm run build"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -43,5 +46,10 @@
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }
