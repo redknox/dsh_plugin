@@ -204,6 +204,19 @@ covers it). After a restart, walk through:
    `/models/Qwen3.8-27B-Q8_0.gguf` appears; picking it fills the model field.
 4. Revert overrides afterwards via the UI or `settings.mutate` unset.
 
+### Generic editor — verified live (2026-02-14, restarted with the controls build)
+
+Walked through the running GUI: the llama.cpp card renders the credential
+field plus schema-driven `providerName` / `baseURL` / `model` (Fetch button)
+/ `apiKeyEnv` / `enabled` / `preset` / `retries` and the `reasoning`,
+`discovery`, `diagnostics`, `telemetry`, `retryPolicy` groups; `endpoints`
+and heterogeneous unions show the explicit settings.yaml hint. A `preset`
+change saved into the user layer (`{"reasoning":{"enabled":true,
+"preset":"low"}}`, `secrets: []`) and re-displayed on reopen. Flipping
+`reasoning.enabled` to `Disabled` locked the `preset` select (the schema
+metadata `meta.extra.controls` linkage); flipping back re-enabled it.
+Restored afterwards (user layer empty, settings.yaml section removed).
+
 Verified in-suite by `tests/generic-editor.client.spec.tsx` (9 cases,
 including master-switch controls and a synthetic non-llama.cpp provider) and
 the updated unknown-namespace cases in `components.client.spec.tsx` — 231
