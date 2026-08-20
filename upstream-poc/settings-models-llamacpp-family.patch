@@ -1,0 +1,296 @@
+--- /tmp/client.js.bak	2026-08-20 14:40:40
++++ /Users/konghaifeng/.npm/_npx/2ede61d9d1d3d32e/node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js	2026-08-20 14:42:51
+@@ -1050,6 +1050,92 @@
+ 			});
+ 		}
+ 		//#endregion
++		/**
++		* Upstream PoC (issue #13): model candidate picker for the llamacpp
++		* family — the single-model counterpart of ModelListEditor's catalog.
++		* Fetches candidates through the registered model discovery
++		* (`api.llm.discoverModels`) and writes the picked id into the `model`
++		* draft field.
++		*/
++		function LlamacppModelPicker(props) {
++			const { probe, api, t, disabled, current, onPick } = props;
++			const [busy, setBusy] = (0, react.useState)(false);
++			const [failure, setFailure] = (0, react.useState)(void 0);
++			const [candidates, setCandidates] = (0, react.useState)(void 0);
++			const fetchModels = async () => {
++				setBusy(true);
++				setFailure(void 0);
++				try {
++					const response = await api.llm.discoverModels({
++						settingsNs: probe.settingsNs,
++						...probe.provider === void 0 ? {} : { provider: probe.provider },
++						...probe.baseURL === void 0 || probe.baseURL.length === 0 ? {} : { baseURL: probe.baseURL },
++						...probe.apiKey === void 0 ? {} : { apiKey: probe.apiKey }
++					});
++					if (!response.result.ok) {
++						setFailure(response.result.error.message);
++						return;
++					}
++					const found = response.result.value.models;
++					if (found.length === 0) {
++						setFailure(t("fetchEmpty"));
++						return;
++					}
++					setCandidates(found);
++				} catch (error) {
++					setFailure(messageOf(error));
++				} finally {
++					setBusy(false);
++				}
++			};
++			return (0, react_jsx_runtime.jsxs)("div", {
++				className: ModelsSection_module_css_default["modelCatalog"],
++				children: [
++					(0, react_jsx_runtime.jsxs)("div", {
++						className: ModelsSection_module_css_default["modelListHead"],
++						children: [
++							(0, react_jsx_runtime.jsx)("span", {
++								className: ModelsSection_module_css_default["modelCatalogTitle"],
++								children: t("models")
++							}),
++							(0, react_jsx_runtime.jsx)("button", {
++								type: "button",
++								className: ModelsSection_module_css_default["linkButton"],
++								disabled: disabled || busy,
++								onClick: fetchModels,
++								children: busy ? t("fetching") : t("fetchModels")
++							})
++						]
++					}),
++					candidates === void 0 ? (current === void 0 ? null : (0, react_jsx_runtime.jsx)("p", {
++						className: ModelsSection_module_css_default["modelCatalogMeta"],
++						children: `${t("model")}: ${current}`
++					})) : (0, react_jsx_runtime.jsx)("ul", {
++						className: ModelsSection_module_css_default["candidateList"],
++						children: candidates.map((candidate) => (0, react_jsx_runtime.jsx)("li", {
++							className: ModelsSection_module_css_default["candidate"],
++							children: (0, react_jsx_runtime.jsx)("button", {
++								type: "button",
++								className: ModelsSection_module_css_default["candidateLabel"],
++								disabled,
++								onClick: () => {
++									onPick(candidate.id);
++									setCandidates(void 0);
++								},
++								children: (0, react_jsx_runtime.jsx)("span", {
++									className: ModelsSection_module_css_default["candidateId"],
++									children: candidate.id
++								})
++							})
++						}, candidate.id))
++					}),
++					failure !== void 0 ? (0, react_jsx_runtime.jsx)("p", {
++						className: ModelsSection_module_css_default["error"],
++						children: failure
++					}) : null
++				]
++			});
++		}
+ 		//#region lib/types/client/CustomProviderCard.js
+ 		/**
+ 		* The card that declares a provider pi-ai does not ship — an OpenAI-compatible
+@@ -1377,6 +1463,7 @@
+ 		function layoutOf(ns) {
+ 			if (ns === "llm-deepseek") return "deepseek";
+ 			if (ns === "llm-pi-ai") return "pi-ai";
++			if (ns === "llm-llamacpp") return "llamacpp"; // upstream-poc (issue #13)
+ 			return "unknown";
+ 		}
+ 		/** The credential reference this profile resolves keys through. */
+@@ -1652,6 +1739,183 @@
+ 						]
+ 					})]
+ 				})] });
++			};
++			/**
++			* Upstream PoC (issue #13): curated fields for the llamacpp family —
++			* the six fields the issue asks to expose in the UI: providerName,
++			* baseURL, model, the credential, reasoning.enabled and
++			* reasoning.preset. Writes travel as ordinary draft path ops through
++			* the shared applyOnce path (settings.mutate) and the shared
++			* credential write (credentials.set).
++			*/
++			const llamacppFields = () => {
++				const keyPlaceholder = keyLocked ? t("keyEnvLocked") : keyState?.configured === true && props.credentialRequired !== true ? t("keyStored") : t("keyPlaceholder");
++				const reasoningEnabled = schema.getPath(draft, ["reasoning", "enabled"]) ?? schema.getPath(fallback, ["reasoning", "enabled"]) ?? true;
++				const reasoningPreset = schema.getPath(draft, ["reasoning", "preset"]) ?? schema.getPath(fallback, ["reasoning", "preset"]) ?? "medium";
++				const setReasoning = (field, value) => {
++					setDraft((current) => schema.setPath(current, ["reasoning", field], value));
++				};
++				return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
++					(0, react_jsx_runtime.jsxs)("div", {
++						className: ModelsSection_module_css_default["field"],
++						children: [
++							(0, react_jsx_runtime.jsx)("span", {
++								className: ModelsSection_module_css_default["fieldLabel"],
++								children: t("keyInput")
++							}),
++							(0, react_jsx_runtime.jsx)("input", {
++								className: ModelsSection_module_css_default["input"],
++								type: "password",
++								autoComplete: "off",
++								value: keyDraft,
++								placeholder: keyPlaceholder,
++								"aria-label": t("keyInput"),
++								"aria-invalid": shownKeyFailure !== void 0,
++								required: props.credentialRequired === true,
++								autoFocus: props.autoFocusCredential === true,
++								disabled: disabled || keyLocked,
++								onChange: (event) => {
++									setKeyDraft(event.target.value);
++								}
++							}),
++							shownKeyFailure === void 0 ? null : (0, react_jsx_runtime.jsx)("p", {
++								className: ModelsSection_module_css_default["error"],
++								children: t(shownKeyFailure)
++							})
++						]
++					}),
++					(0, react_jsx_runtime.jsxs)("details", {
++						className: ModelsSection_module_css_default["customized"],
++						children: [
++							(0, react_jsx_runtime.jsx)("summary", {
++								className: ModelsSection_module_css_default["customizedSummary"],
++								children: t("customized")
++							}),
++							(0, react_jsx_runtime.jsxs)("div", {
++								className: ModelsSection_module_css_default["customizedBody"],
++								children: [
++									(0, react_jsx_runtime.jsxs)("div", {
++										className: ModelsSection_module_css_default["field"],
++										children: [
++											(0, react_jsx_runtime.jsx)("span", {
++												className: ModelsSection_module_css_default["fieldLabel"],
++												children: t("customDisplayName")
++											}),
++											(0, react_jsx_runtime.jsx)("input", {
++												className: ModelsSection_module_css_default["input"],
++												type: "text",
++												value: stringAt(draft, "providerName") ?? "",
++												placeholder: stringAt(schema.getPath(namespace.base, settingsPath), "providerName") ?? props.provider,
++												"aria-label": t("customDisplayName"),
++												disabled,
++												onChange: (event) => {
++													setField("providerName", event.target.value);
++												}
++											})
++										]
++									}),
++									(0, react_jsx_runtime.jsxs)("div", {
++										className: ModelsSection_module_css_default["field"],
++										children: [
++											(0, react_jsx_runtime.jsx)("span", {
++												className: ModelsSection_module_css_default["fieldLabel"],
++												children: t("baseUrl")
++											}),
++											(0, react_jsx_runtime.jsx)("input", {
++												className: ModelsSection_module_css_default["input"],
++												type: "text",
++												value: stringAt(draft, "baseURL") ?? "",
++												placeholder: stringAt(fallback, "baseURL") ?? t("baseUrlDefault"),
++												"aria-label": t("baseUrl"),
++												disabled,
++												onChange: (event) => {
++													setField("baseURL", event.target.value === "" ? void 0 : event.target.value);
++												}
++											})
++										]
++									}),
++									(0, react_jsx_runtime.jsxs)("div", {
++										className: ModelsSection_module_css_default["field"],
++										children: [
++											(0, react_jsx_runtime.jsx)("span", {
++												className: ModelsSection_module_css_default["fieldLabel"],
++												children: t("model")
++											}),
++											(0, react_jsx_runtime.jsx)("input", {
++												className: ModelsSection_module_css_default["input"],
++												type: "text",
++												value: stringAt(draft, "model") ?? "",
++												placeholder: stringAt(fallback, "model") ?? "",
++												"aria-label": t("model"),
++												disabled,
++												onChange: (event) => {
++													setField("model", event.target.value === "" ? void 0 : event.target.value);
++												}
++											})
++										]
++									}),
++									(0, react_jsx_runtime.jsxs)("div", {
++										className: ModelsSection_module_css_default["field"],
++										children: [
++											(0, react_jsx_runtime.jsx)("span", {
++												className: ModelsSection_module_css_default["fieldLabel"],
++												children: "Reasoning"
++											}),
++											(0, react_jsx_runtime.jsx)("select", {
++												className: `${ModelsSection_module_css_default["input"]} ${ModelsSection_module_css_default["selectInput"]}`,
++												value: reasoningEnabled ? "enabled" : "disabled",
++												"aria-label": "Reasoning",
++												disabled,
++												onChange: (event) => {
++													setReasoning("enabled", event.target.value === "enabled");
++												},
++												children: [(0, react_jsx_runtime.jsx)("option", {
++													value: "enabled",
++													children: "Enabled"
++												}), (0, react_jsx_runtime.jsx)("option", {
++													value: "disabled",
++													children: "Disabled"
++												})]
++											})
++										]
++									}),
++									(0, react_jsx_runtime.jsxs)("div", {
++										className: ModelsSection_module_css_default["field"],
++										children: [
++											(0, react_jsx_runtime.jsx)("span", {
++												className: ModelsSection_module_css_default["fieldLabel"],
++												children: "Reasoning preset"
++											}),
++											(0, react_jsx_runtime.jsx)("select", {
++												className: `${ModelsSection_module_css_default["input"]} ${ModelsSection_module_css_default["selectInput"]}`,
++												value: reasoningPreset,
++												"aria-label": "Reasoning preset",
++												disabled,
++												onChange: (event) => {
++													setReasoning("preset", event.target.value);
++												},
++												children: ["off", "low", "medium", "xhigh"].map((level) => (0, react_jsx_runtime.jsx)("option", {
++													value: level,
++													children: level
++												}, level))
++											})
++										]
++									}),
++									(0, react_jsx_runtime.jsx)(LlamacppModelPicker, {
++										probe,
++										api,
++										t,
++										disabled,
++										current: stringAt(draft, "model") ?? stringAt(fallback, "model"),
++										onPick: (id) => {
++											setField("model", id);
++										}
++									})
++								]
++							})
++						]
++					})
++				] });
+ 			};
+ 			return (0, react_jsx_runtime.jsxs)("div", {
+ 				className: props.credentialOnly === true ? ModelsSection_module_css_default["addBlock"] : ModelsSection_module_css_default["editor"],
+@@ -1669,7 +1933,7 @@
+ 					layout === "unknown" ? (0, react_jsx_runtime.jsx)("p", {
+ 						className: ModelsSection_module_css_default["advancedHint"],
+ 						children: `${t("advancedHint")} (${namespace.ns})`
+-					}) : curatedFields(layout),
++					}) : layout === "llamacpp" ? llamacppFields() : curatedFields(layout),
+ 					failure !== void 0 ? (0, react_jsx_runtime.jsx)("p", {
+ 						className: ModelsSection_module_css_default["error"],
+ 						children: failure

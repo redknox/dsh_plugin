@@ -121,17 +121,30 @@ instance and requires **zero front-end code**:
    integration test (`tests/integration.test.ts`, `ctx.llm.discoverModels`
    through the mounted plugin, including the `NO_DISCOVERY` error for an
    unknown namespace).
+5. **Minimal UI PoC (upstream patch prototype)** — because the Models page
+   editor is upstream code, the UI PoC lives as a small patch on the host's
+   `@deepseek-ai/dsh-client-ui-settings-models` bundle, preserved in
+   `upstream-poc/` (README + patch). It gives the `llm-llamacpp` namespace a
+   curated `llamacpp` family in the Models page: the six fields the issue asks
+   to expose — Display name (`providerName`), Base URL, Model, API key
+   (credential flow), Reasoning `enabled`, Reasoning `preset` — plus a
+   "Fetch available models" picker wired to `llm.discoverModels`. Saving uses
+   the page's existing `settings.mutate` + `credentials.set` write path, so
+   the RPC POC's guarantees (live update, no secret in settings.yaml) hold in
+   the UI unchanged.
 
 ## 5. Design options for follow-up (issue candidates)
 
 ### Option A — upstream: generalize the Models page (deepseek-harness)
 
-Teach the Models page to render **any** configurable-provider namespace from
-its `settings.describe` schema + schemastery metadata: an unknown family gets
-a generic schema-driven form (fields from the schema, credential field via the
-secrets slots, model dropdown via `llm.discoverModels` when a discovery is
-registered, submit enabled). The family branches for deepseek/pi-ai remain as
-curated overrides. This benefits every third-party provider, not just ours.
+**Status: validated as a patch prototype** (`upstream-poc/`). The prototype
+hard-codes a `llamacpp` family for our namespace; the upstream PR should
+instead generalize the unknown-family branch to render **any**
+configurable-provider namespace from its `settings.describe` schema +
+schemastery metadata (fields from the schema, credential field via the
+secrets slots, model picker via `llm.discoverModels` when a discovery is
+registered, submit enabled), keeping the deepseek/pi-ai branches as curated
+overrides. This benefits every third-party provider, not just ours.
 
 - Pros: the only path that makes the GUI fully usable for llama.cpp; upstream
   value for all providers.
@@ -164,9 +177,11 @@ RPC recipes.
 
 ### Recommended sequence
 
-1. **Option A (upstream)** — small, high-leverage: relax `layoutOf` to render
-   a generic schema-driven editor for unknown namespaces, enabling submit and
-   a discovery-backed dropdown when available. Do it in deepseek-harness.
+1. **Option A (upstream)** — small, high-leverage. The `upstream-poc/` patch
+   prototype already proves the shape on the running instance (hard-coded
+   `llamacpp` family); the upstream PR generalizes it into a schema-driven
+   editor for unknown namespaces, enabling submit and a discovery-backed
+   dropdown for every provider. Do it in deepseek-harness.
 2. **Option C documentation** — ship the RPC recipes (this doc + the POC
    script) so operators have a repeatable path today.
 3. Only if A is rejected upstream, consider **Option B**.

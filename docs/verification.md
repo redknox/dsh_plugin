@@ -111,6 +111,39 @@ with `registerModelDiscovery` is loaded):
 | `llm.discoverModels` provider path | `{settingsNs, provider: llamacpp-local}` → same model, answered from adapter knowledge, no network call |
 | restore | `reasoning.preset` back to `medium`, user layer empty, no leftover sections |
 
+## 7. Settings-surface UI PoC (#13, upstream patch prototype)
+
+The acceptance criteria require the minimal configuration PoC to be
+*demonstrated in the Models UI*. The Models page editor is upstream
+(`@deepseek-ai/dsh-client-ui-settings-models`), so the UI PoC is a small patch
+on the host bundle, preserved in `upstream-poc/` (README + patch, see
+`docs/exploration/settings-ui.md` §4.5). It gives `llm-llamacpp` a curated
+`llamacpp` family in the Models page.
+
+Apply the patch, restart the DSH web app (the bundle revision is re-hashed at
+boot), then walk through:
+
+1. Open **Settings → Models**; the **llama.cpp (Local Qwen3.8)** row shows a
+   green credential dot (env-provided key).
+2. **Edit** it: the editor now shows **API key**, and under *Customized
+   settings*: **Display name** (`providerName`), **Base URL**, **Model**,
+   **Reasoning** (Enabled/Disabled → `reasoning.enabled`), **Reasoning
+   preset** (off/low/medium/xhigh → `reasoning.preset`), and **Fetch
+   available models** (→ host `llm.discoverModels`; pick
+   `/models/Qwen3.8-27B-Q8_0.gguf` to fill the Model field).
+3. Change, say, the reasoning preset to `low` and **Apply**. The saved notice
+   appears and the change is live without a restart — verify with:
+
+```bash
+curl -s -X POST http://127.0.0.1:3080/api/settings.describe -H 'Content-Type: application/json' \
+  -d '{"type":"client-request","rpcId":"x","method":"settings.describe","payload":{}}'
+# llm-llamacpp value.reasoning.preset: "low", user layer contains the override,
+# secrets: [] (the API key never lands in settings)
+```
+
+4. Revert the preset in the UI (or `settings.mutate` unset) and confirm the
+   user layer returns empty.
+
 ## Issue-to-behavior map
 
 | Issue | Observable in the running instance |
@@ -127,4 +160,4 @@ with `registerModelDiscovery` is loaded):
 | #10 discovery | model catalog reflects the server; resolveModelInfo context |
 | #11 feedback | `reasoning.feedback.enabled` + feedback rationale in reasoning events |
 | #12 diagnostics | `examples/diagnostics.mjs` + `llm-llamacpp/diagnostics` ctx service |
-| #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm.discoverModels` for the `llm-llamacpp` namespace |
+| #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm.discoverModels` for the `llm-llamacpp` namespace; Models-page UI PoC via `upstream-poc/` patch |
