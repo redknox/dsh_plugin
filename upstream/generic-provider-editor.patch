@@ -1,9 +1,9 @@
 diff --git a/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
 new file mode 100644
-index 0000000..dd7a760
+index 0000000..f1a63e4
 --- /dev/null
 +++ b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
-@@ -0,0 +1,535 @@
+@@ -0,0 +1,541 @@
 +/**
 + * Schema-driven editor for configurable providers the Models page has no
 + * curated family for (issue #14). Renders the provider's own
@@ -410,9 +410,15 @@ index 0000000..dd7a760
 +  const ui = uiOf(props.field)
 +  const label = ui?.label ?? humanize(props.name)
 +  const collapsed = ui?.collapsed === true
++  const description = ui?.description
 +  return (
 +    <details className={styles['customized']} open={!collapsed}>
-+      <summary className={styles['customizedSummary']}>{label}</summary>
++      <summary className={styles['customizedSummary']}>
++        {label}
++        {description === undefined || description.length === 0
++          ? null
++          : <span className={styles['modelCatalogMeta']}>{` — ${description}`}</span>}
++      </summary>
 +      <div className={styles['customizedBody']}>
 +        {objectChildren(props)}
 +      </div>
@@ -706,7 +712,7 @@ index 4948e12..902d891 100644
    it('surfaces a rejected settings write and never stores the key after it', async () => {
 diff --git a/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
 new file mode 100644
-index 0000000..6d3c204
+index 0000000..6f10a36
 --- /dev/null
 +++ b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
 @@ -0,0 +1,373 @@
@@ -748,7 +754,7 @@ index 0000000..6d3c204
 +  reasoning: Schema.object({
 +    enabled: Schema.boolean().default(true).extra('extra', { controls: ['preset'] }),
 +    preset: Schema.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
-+  }).extra('extra', { ui: { label: 'Reasoning', collapsed: true } }),
++  }).extra('extra', { ui: { label: 'Reasoning', collapsed: true, description: 'Thinking presets and budget.' } }),
 +  // Unsupported constructs this editor must surface, never silently drop.
 +  endpoints: Schema.array(Schema.string()),
 +  anything: Schema.any(),
@@ -1035,9 +1041,9 @@ index 0000000..6d3c204
 +    expect(screen.getByLabelText('providerName')).toBeInstanceOf(HTMLInputElement)
 +    // The reasoning object is a group declared collapsed via ui metadata.
 +    const summaries = [...document.querySelectorAll('summary')].map(s => s.textContent)
-+    expect(summaries).toContain('Reasoning')
++    expect(summaries.some(s => s?.startsWith('Reasoning'))).toBe(true)
 +    const group = [...document.querySelectorAll('details')]
-+      .find(d => d.querySelector('summary')?.textContent === 'Reasoning')
++      .find(d => d.querySelector('summary')?.textContent?.startsWith('Reasoning'))
 +    expect(group).toBeDefined()
 +    expect(group?.hasAttribute('open')).toBe(false)
 +    // Group members still exist in the DOM (hidden) and keep their labels.

@@ -83,13 +83,13 @@ const ReasoningSchema = z.object({
   /** Default semantic level when a request names none. */
   preset: z.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
   /** Explicit expert override surface; never rewrites the preset table. */
-  expert: ReasoningExpertSchema.extra('extra', { ui: { label: 'Expert override', collapsed: true } }),
+  expert: ReasoningExpertSchema.extra('extra', { ui: { label: 'Expert override', collapsed: true, description: 'Explicit per-field overrides of the preset table.' } }),
   /** llama.cpp wire translation mode; `none` sends no reasoning wire fields (issue #18). */
   wire: z.union(['chat-template-kwargs', 'reasoning-fields', 'none']).default('none'),
   /** Optional adaptive budget adjustment from request context. */
-  adaptive: AdaptiveSchema.extra('extra', { ui: { label: 'Adaptive budget', collapsed: true } }),
+  adaptive: AdaptiveSchema.extra('extra', { ui: { label: 'Adaptive budget', collapsed: true, description: 'Choose the thinking budget from request context within bounds.' } }),
   /** Optional feedback-informed budget adjustment (issue #11). */
-  feedback: FeedbackSchema.extra('extra', { ui: { label: 'Feedback', collapsed: true } }),
+  feedback: FeedbackSchema.extra('extra', { ui: { label: 'Feedback', collapsed: true, description: 'Layer recent provider outcomes onto the budget decision.' } }),
 });
 
 /** Structured observability toggle (issue #8). */
@@ -180,22 +180,22 @@ export const Config = z.object({
    * first entry is the primary. Omission keeps single-endpoint behavior.
    */
   endpoints: z.array(EndpointSchema)
-    .extra('extra', { ui: { label: 'Endpoints', collapsed: true } }),
+    .extra('extra', { ui: { label: 'Endpoints', collapsed: true, description: 'Ordered fallback servers, optionally with capability metadata.' } }),
   /** Provider-owned retry policy (reliability layer, issue #7). */
   retryPolicy: RetryPolicySchema
-    .extra('extra', { ui: { label: 'Reliability', collapsed: true } }),
+    .extra('extra', { ui: { label: 'Reliability', collapsed: true, description: 'Retry policy, backoff, and endpoint fallback behavior.' } }),
   /** Structured request telemetry (issue #8); disable to stop emission. */
   telemetry: TelemetrySchema
-    .extra('extra', { ui: { label: 'Telemetry', collapsed: true } }),
+    .extra('extra', { ui: { label: 'Telemetry', collapsed: true, description: 'Structured per-request observability events.' } }),
   /** Model/capability discovery (issue #10); off keeps single-server simple. */
   discovery: DiscoverySchema
-    .extra('extra', { ui: { label: 'Discovery', collapsed: true } }),
+    .extra('extra', { ui: { label: 'Discovery', collapsed: true, description: 'Auto-discover model ids and server capabilities from the endpoint.' } }),
   /** Bounded production diagnostics (issue #12). */
   diagnostics: DiagnosticsSchema
-    .extra('extra', { ui: { label: 'Diagnostics', collapsed: true } }),
+    .extra('extra', { ui: { label: 'Diagnostics', collapsed: true, description: 'Bounded machine-readable diagnostics for operations.' } }),
   /** Semantic reasoning controls (model-family aware; Qwen is the validated family). */
   reasoning: ReasoningSchema
-    .extra('extra', { ui: { label: 'Reasoning', collapsed: true } }),
+    .extra('extra', { ui: { label: 'Reasoning', collapsed: true, description: 'Semantic thinking presets, expert overrides, and budget adjustment.' } }),
 });
 
 export type ConfigType = {
