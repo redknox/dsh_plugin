@@ -25,6 +25,7 @@ import {
   type ReasoningPolicyConfig,
   type ReasoningWireMode,
 } from './reasoning.ts';
+import type { EndpointCapabilities, EndpointRoutingProfile } from './routing.ts';
 
 /** Cordis plugin short name; also the settings namespace and npm package name. */
 export const PLUGIN_NAME = 'llm-llamacpp';
@@ -78,6 +79,24 @@ const TelemetrySchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+/** Endpoint capability metadata for capability-aware routing (issue #9). */
+const EndpointCapabilitiesSchema = z.object({
+  models: z.array(z.string()),
+  contextWindow: z.number().step(1).min(1),
+  tools: z.boolean(),
+  reasoning: z.boolean(),
+  workload: z.array(z.string()),
+});
+
+/** One endpoint entry: a plain URL, or a URL plus capability metadata. */
+const EndpointSchema = z.union([
+  z.string(),
+  z.object({
+    url: z.string(),
+    capabilities: EndpointCapabilitiesSchema,
+  }),
+]);
+
 /**
  * Plugin entry config. Every field is optional so the plugin loads with
  * llama.cpp's own defaults; `baseURL` still fails clearly when it is present
@@ -106,11 +125,12 @@ export const Config = z.object({
    */
   requestTimeoutMs: z.number().step(1).min(1),
   /**
-   * Ordered list of llama.cpp endpoint base URLs for fallback (issue #7).
-   * When present it replaces `baseURL` as the candidate set; the first entry
-   * is the primary. Omission keeps single-endpoint behavior (just `baseURL`).
+   * Ordered list of llama.cpp endpoint base URLs for fallback (issue #7),
+   * optionally with capability metadata for capability-aware routing
+   * (issue #9). When present it replaces `baseURL` as the candidate set; the
+   * first entry is the primary. Omission keeps single-endpoint behavior.
    */
-  endpoints: z.array(z.string()),
+  endpoints: z.array(EndpointSchema),
   /** Provider-owned retry policy (reliability layer, issue #7). */
   retryPolicy: RetryPolicySchema,
   /** Structured request telemetry (issue #8); disable to stop emission. */
@@ -135,7 +155,7 @@ export type ConfigType = {
   /** Hard per-request-attempt timeout (ms), regardless of activity. */
   requestTimeoutMs?: number;
   /** Ordered fallback endpoint list; replaces `baseURL` when present. */
-  endpoints?: string[];
+  endpoints?: (string | { url: string; capabilities?: EndpointCapabilities })[];
   /** Provider-owned retry policy (reliability layer, issue #7). */
   retryPolicy?: RetryPolicyConfig;
   /** Structured request telemetry (issue #8). */
@@ -163,6 +183,8 @@ export interface ResolvedAdapterOptions {
   readonly baseURL: string;
   /** Ordered candidate endpoints (fallback order); `[baseURL]` when unset. */
   readonly endpoints: readonly string[];
+  /** Same endpoints with optional capability metadata (issue #9). */
+  readonly endpointProfiles: readonly EndpointRoutingProfile[];
   readonly model: string;
   /** Environment variable naming the API key, when one is configured. */
   readonly apiKeyEnv?: string;
@@ -219,17 +241,29 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     throw new Error('llm-llamacpp: requestTimeoutMs must be a positive safe integer');
   }
   // Ordered fallback candidate list; `endpoints` replaces `baseURL` when set.
-  const rawEndpoints = config.endpoints !== undefined && config.endpoints.length > 0
-    ? config.endpoints
-    : [baseURL];
+  // Each entry is a plain URL or a URL + capability profile (issue #9).
+  const rawEndpoints: readonly (string | { url: string; capabilities?: EndpointCapabilities })[] =
+    config.endpoints !== undefined && config.endpoints.length > 0 ? config.endpoints : [baseURL];
   const seen = new Set<string>();
-  const endpoints: string[] = [];
+  const endpointProfiles: EndpointRoutingProfile[] = [];
   for (const raw of rawEndpoints) {
-    const url = validateBaseURL(raw);
+    const url = validateBaseURL(typeof raw === 'string' ? raw : raw.url);
     if (seen.has(url)) continue;
     seen.add(url);
-    endpoints.push(url);
+    const capabilities = typeof raw === 'string' ? undefined : raw.capabilities;
+    if (capabilities !== undefined) {
+      if (capabilities.contextWindow !== undefined && (!Number.isSafeInteger(capabilities.contextWindow) || capabilities.contextWindow <= 0)) {
+        throw new Error(`llm-llamacpp: endpoints[${url}].contextWindow must be a positive safe integer`);
+      }
+      for (const list of [capabilities.models, capabilities.workload] as const) {
+        if (list !== undefined && list.some((item) => typeof item !== 'string' || item.length === 0)) {
+          throw new Error(`llm-llamacpp: endpoints[${url}] model/workload lists must contain only non-empty strings`);
+        }
+      }
+    }
+    endpointProfiles.push({ baseURL: url, ...(capabilities !== undefined ? { capabilities } : {}) });
   }
+  const endpoints = endpointProfiles.map((profile) => profile.baseURL);
   const reasoningRaw = config.reasoning ?? {};
   const adaptiveRaw = reasoningRaw.adaptive;
   const reasoning: ReasoningPolicyConfig = {
@@ -254,6 +288,7 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     providerName,
     baseURL: endpoints[0] ?? baseURL,
     endpoints,
+    endpointProfiles,
     model,
     ...apiKeyEnv !== undefined && apiKeyEnv.length > 0 ? { apiKeyEnv } : {},
     apiKeyHeader,

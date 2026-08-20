@@ -121,6 +121,43 @@ endpoint, or an empty `model`/`providerName` fails clearly. When the harness
 settings service is mounted, the same schema drives an `llm-llamacpp` settings
 section that can override any field without a restart.
 
+## Capability-aware endpoint routing (issue #9)
+
+Evolve ordered fallback into capability-aware routing: an eligible endpoint
+set is chosen from request/model capabilities **before** reliability fallback
+begins. A plain endpoint list with no capability metadata routes exactly as
+#7 does today (all eligible, configuration order).
+
+`endpoints` accepts either plain URLs or URL + capability objects:
+
+```yaml
+endpoints:
+  - http://10.0.0.1:8080
+  - url: http://10.0.0.2:8080
+    capabilities:
+      models: [qwen3]            # exact model ids served; absent = any
+      contextWindow: 32768       # max context window in tokens
+      tools: true                # false = no tool calling
+      reasoning: true            # false = no thinking support
+      workload: [chat, code]     # preferred workload classes
+```
+
+Eligibility rules (deterministic): exact model compatibility first, then
+context-window fit (estimated prompt size), then tool/reasoning requirements
+(absent capability = unknown = assumed supported). Equally eligible candidates
+keep configuration order, with matching `workload` classes sorting first
+(stable). When **no** configured endpoint satisfies mandatory capabilities the
+request fails explicitly with `NO_ELIGIBLE_ENDPOINT`. Reliability (health,
+backoff, transient retry/fallback from #7) still owns failures after routing
+selects the eligible candidates.
+
+The routing decision (candidates + rationale) is emitted through the #8
+telemetry seam as a `routing` event:
+
+| event | fields | units / cardinality |
+|---|---|---|
+| `routing` | `decision: { candidates, rationale }` | once per request, after capability selection |
+
 ## Observability (issue #8)
 
 Optional structured request telemetry, emitted through a narrow sink (no

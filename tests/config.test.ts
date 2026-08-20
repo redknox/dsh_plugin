@@ -89,6 +89,26 @@ describe('resolveAdapterOptions', () => {
     expect(options.baseURL).toBe('http://10.0.0.1:8080');
   });
 
+  it('resolves endpoint capability profiles (issue #9)', () => {
+    const options = resolveAdapterOptions({
+      endpoints: [
+        'http://10.0.0.1:8080',
+        { url: 'http://10.0.0.2:8080', capabilities: { models: ['qwen3'], contextWindow: 32768, tools: true, reasoning: true, workload: ['chat'] } },
+      ],
+    });
+    expect(options.endpoints).toEqual(['http://10.0.0.1:8080', 'http://10.0.0.2:8080']);
+    expect(options.endpointProfiles).toEqual([
+      { baseURL: 'http://10.0.0.1:8080' },
+      { baseURL: 'http://10.0.0.2:8080', capabilities: { models: ['qwen3'], contextWindow: 32768, tools: true, reasoning: true, workload: ['chat'] } },
+    ]);
+  });
+
+  it('rejects invalid endpoint capability config (issue #9)', () => {
+    expect(() => resolveAdapterOptions({ endpoints: [{ url: 'http://a', capabilities: { contextWindow: 0 } }] }))
+      .toThrow(/contextWindow/);
+    expect(() => resolveAdapterOptions({ endpoints: [{ url: 'not-a-url' }] })).toThrow(/URL/);
+  });
+
   it('rejects an invalid fallback endpoint (issue #7)', () => {
     expect(() => resolveAdapterOptions({ endpoints: ['not-a-url'] })).toThrow(/URL/);
     expect(() => resolveAdapterOptions({ endpoints: ['ftp://x'] })).toThrow(/http or https/);

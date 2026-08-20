@@ -39,6 +39,11 @@ import {
   streamReliably,
   type ReliabilityEndpoint,
 } from './reliability.ts';
+import {
+  deriveWorkload,
+  routeEndpoints,
+  type RoutingRequest,
+} from './routing.ts';
 import { serializeRequest } from './serialize.ts';
 import {
   NoopTelemetry,
@@ -246,7 +251,26 @@ export class LlamacppAdapter extends LlmAdapter {
             value: opts.apiKeyHeader === 'authorization' ? `Bearer ${apiKey}` : apiKey,
           }
         : undefined;
-      const endpoints: readonly ReliabilityEndpoint[] = opts.endpoints.map((baseURL) => ({
+
+      // Capability-aware routing (issue #9) before reliability fallback: pick
+      // eligible endpoints from request/model capabilities; a plain endpoint
+      // list without metadata routes exactly as #7 (all eligible, config
+      // order). Reliability still owns transient failures afterwards.
+      const routingRequest: RoutingRequest = {
+        model: options.model,
+        toolsAvailable: (options.tools?.length ?? 0) > 0,
+        reasoningEnabled: reasoning.enabled,
+        workload: deriveWorkload(options.purpose, reasoning.enabled),
+        ...(context.estimatedPromptTokens !== undefined ? { estimatedPromptTokens: context.estimatedPromptTokens } : {}),
+      };
+      const routing = routeEndpoints(routingRequest, opts.endpointProfiles);
+      sink.emit({
+        type: 'routing',
+        requestId,
+        at: Date.now(),
+        decision: { candidates: routing.candidates, rationale: routing.rationale },
+      });
+      const endpoints: readonly ReliabilityEndpoint[] = routing.candidates.map((baseURL) => ({
         baseURL,
         ...(auth !== undefined ? { auth } : {}),
       }));

@@ -72,6 +72,14 @@ export interface ReasoningDecisionEvent {
   readonly reason?: string;
 }
 
+/** Capability-aware routing decision (issue #9). */
+export interface RoutingDecisionEvent {
+  /** Eligible endpoint base URLs in preference order. */
+  readonly candidates: readonly string[];
+  /** Exclusions and final ordering rationale. */
+  readonly rationale: readonly string[];
+}
+
 /** One structured telemetry event. */
 export type TelemetryEvent =
   | {
@@ -85,6 +93,12 @@ export type TelemetryEvent =
       readonly requestId: string;
       readonly at: number;
       readonly decision: ReasoningDecisionEvent;
+    }
+  | {
+      readonly type: 'routing';
+      readonly requestId: string;
+      readonly at: number;
+      readonly decision: RoutingDecisionEvent;
     }
   | {
       readonly type: 'attempt';
