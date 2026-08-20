@@ -1,5 +1,5 @@
 --- /tmp/client.js.bak	2026-08-20 14:40:40
-+++ /Users/konghaifeng/.npm/_npx/2ede61d9d1d3d32e/node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js	2026-08-20 14:42:51
++++ /Users/konghaifeng/.npm/_npx/2ede61d9d1d3d32e/node_modules/@deepseek-ai/dsh-client-ui-settings-models/lib/client.js	2026-08-20 14:53:06
 @@ -1050,6 +1050,92 @@
  			});
  		}
@@ -256,7 +256,7 @@
 +												className: `${ModelsSection_module_css_default["input"]} ${ModelsSection_module_css_default["selectInput"]}`,
 +												value: reasoningPreset,
 +												"aria-label": "Reasoning preset",
-+												disabled,
++												disabled: disabled || !reasoningEnabled,
 +												onChange: (event) => {
 +													setReasoning("preset", event.target.value);
 +												},

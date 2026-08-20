@@ -150,6 +150,8 @@ Applied the patch, restarted, and walked through the editor in the running
 GUI: **Settings → Models → llama.cpp (Local Qwen3.8) → Edit** now shows the
 API key field plus *Customized settings* with Display name / Base URL /
 Model / Reasoning / Reasoning preset and the Fetch available models picker.
+Setting Reasoning to `Disabled` locks the Reasoning preset select (the master
+thinking switch off makes the preset meaningless).
 Changed Reasoning preset to `low` and hit Apply — green saved notice
 appeared. Host-side evidence:
 

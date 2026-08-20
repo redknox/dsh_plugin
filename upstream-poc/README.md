@@ -29,7 +29,9 @@ bundle, CJS factory format):
    family: API key (existing credential flow through `credentials.set`),
    Display name (`providerName`), Base URL, Model, Reasoning (`enabled`
    on/off), Reasoning preset (`off/low/medium/xhigh`), and the model
-   candidate picker.
+   candidate picker. The preset select is locked (`disabled`) while
+   Reasoning is `Disabled` — with the master thinking switch off the preset
+   is meaningless.
 4. Render point — `layout === "llamacpp" ? llamacppFields() : ...`.
 
 Saving uses the **existing** editor write path untouched: draft path ops via
