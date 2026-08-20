@@ -16,6 +16,8 @@ import {
   isTokenDelta,
   type FinishReason,
   type GenerateOptions,
+  type LlmDiscoveredModel,
+  type LlmModelDiscoveryRequest,
   type LlmModelInfo,
   type LlmProviderInfo,
   type LlmResolvedModelInfo,
@@ -260,6 +262,72 @@ export class LlamacppAdapter extends LlmAdapter {
       ...(merged.contextWindow !== undefined ? { context: { contextWindow: merged.contextWindow } } : {}),
       reasoning: { efforts, defaultEffort },
     };
+  }
+
+  /**
+   * Answer one model-discovery interrogation (issue #13). A settings surface
+   * sends a draft it is still editing, so this never reads or writes settings
+   * or credentials — the request carries the endpoint and one-shot credential,
+   * or names a route the adapter already knows:
+   *
+   * - `request.baseURL` present: probe that endpoint, honoring the one-shot
+   *   `request.apiKey` when given (else the configured key, resolved
+   *   defensively). The per-endpoint TTL cache is reused when the URL matches
+   *   a configured profile, so repeated dropdown opens stay cheap; a draft
+   *   URL probes fresh.
+   * - otherwise `request.provider` present: answer from adapter knowledge —
+   *   the configured model plus fresh cached discoveries — without a network
+   *   call (the route is already registered; its own registry is the better
+   *   answer).
+   * - otherwise: `[]`.
+   *
+   * Probe failures degrade to `[]` and never throw, except that caller
+   * cancellation propagates so the interrogation settles promptly.
+   */
+  async discoverDraft(request: LlmModelDiscoveryRequest): Promise<readonly LlmDiscoveredModel[]> {
+    const opts = this.deps.options();
+    if (request.baseURL !== undefined && request.baseURL.length > 0) {
+      // One-shot credential from the draft wins; else the configured key.
+      let auth: LlamaCppAuth | undefined;
+      if (request.apiKey !== undefined && request.apiKey.length > 0) {
+        auth = {
+          name: opts.apiKeyHeader,
+          value: opts.apiKeyHeader === 'authorization' ? `Bearer ${request.apiKey}` : request.apiKey,
+        };
+      } else {
+        auth = await this.resolveAuth();
+      }
+      const discovery = this.discoveryFor(request.baseURL, auth);
+      try {
+        const result = await discovery.discover(request.signal);
+        return result.models.map((model) => ({
+          id: model.id,
+          ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+        }));
+      } catch (error) {
+        // Cancellation must propagate (the host waits on the RPC); probe
+        // failures degrade to an empty list — never a broken interrogation.
+        if (request.signal?.aborted) throw error;
+        return [];
+      }
+    }
+    if (request.provider !== undefined && request.provider.length > 0) {
+      // Adapter knowledge, no network: the configured model plus any TTL-fresh
+      // discovered ids across endpoints (union, configured first).
+      const known = new Map<string, LlmDiscoveredModel>();
+      known.set(opts.model, { id: opts.model });
+      for (const profile of opts.endpointProfiles) {
+        const result = this.discoveryFor(profile.baseURL).discoverCached();
+        for (const entry of result?.models ?? []) {
+          known.set(entry.id, {
+            id: entry.id,
+            ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
+          });
+        }
+      }
+      return [...known.values()];
+    }
+    return [];
   }
 
   /**

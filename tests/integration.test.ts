@@ -13,7 +13,7 @@ import LlmRuntime, {
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Config, PLUGIN_NAME, PROVIDER, apply, type ConfigType } from '../src/index.ts';
+import { Config, NS, PLUGIN_NAME, PROVIDER, apply, type ConfigType } from '../src/index.ts';
 import { SSE_DONE } from '../src/protocol.ts';
 
 const mountPlugin: Plugin = { name: PLUGIN_NAME, inject: ['llm'], Config, apply };
@@ -258,5 +258,33 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
     };
     const toolMessage = secondWire.messages.find((m) => m.role === 'tool');
     expect(toolMessage).toEqual({ role: 'tool', tool_call_id: 'call_7', content: '14:30' });
+  });
+
+  it('serves model discovery for the settings namespace through ctx.llm (issue #13)', async () => {
+    fetchMock.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: 'm1', meta: { n_ctx: 8192 } }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const ctx = await mounted({ baseURL: 'http://127.0.0.1:8080' });
+
+    // Draft endpoint path: interrogate a baseURL the composition does not
+    // store yet, with the one-shot credential the draft carries.
+    const draft = await ctx.llm.discoverModels(NS, { baseURL: 'http://127.0.0.1:9090', apiKey: 'draft-key' });
+    expect(draft).toEqual([{ id: 'm1', contextWindow: 8192 }]);
+
+    // Provider path: the registered route answers from adapter knowledge —
+    // the configured model (its endpoint cache is not primed in this test).
+    const known = await ctx.llm.discoverModels(NS, { provider: PROVIDER });
+    expect(known.map((m) => m.id)).toEqual(['qwen3']);
+
+    // A settings surface editing an unknown namespace still gets a clear error.
+    await expect(ctx.llm.discoverModels('llm-other', { baseURL: 'http://x' })).rejects.toMatchObject({ code: 'NO_DISCOVERY' });
   });
 });

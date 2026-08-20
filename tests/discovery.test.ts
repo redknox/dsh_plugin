@@ -256,3 +256,105 @@ describe('discovery feeding the adapter', () => {
     expect(createClient.mock.calls.map((c) => c[0])).toEqual(['http://b']);
   });
 });
+
+describe('discoverDraft (issue #13 settings-surface interrogation)', () => {
+  it('probes a draft baseURL with the one-shot credential and maps discovered facts', async () => {
+    const seen: string[] = [];
+    stubFetch((url, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      seen.push(`${url} => ${headers.authorization ?? 'no-auth'}`);
+      if (url.endsWith('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'draft-model', meta: { n_ctx: 16_384 } }] });
+      }
+      return jsonResponse({});
+    });
+    const options = resolveAdapterOptions({ baseURL: 'http://configured', model: 'qwen3', discovery: { ttlMs: 60_000 } });
+    const adapter = new LlamacppAdapter({ options: () => options, resolveApiKey: async () => undefined, createClient: vi.fn() });
+    const models = await adapter.discoverDraft({ baseURL: 'http://draft', apiKey: 'draft-key' });
+    expect(models).toEqual([{ id: 'draft-model', contextWindow: 16_384 }]);
+    // The one-shot credential rides every probe of the draft endpoint.
+    expect(seen).toHaveLength(3);
+    expect(seen.every((line) => line.includes('Bearer draft-key'))).toBe(true);
+    expect(seen.every((line) => line.startsWith('http://draft/'))).toBe(true);
+  });
+
+  it('reuses the configured key when the draft carries no credential', async () => {
+    const seen: string[] = [];
+    stubFetch((url, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      seen.push(headers.authorization ?? 'no-auth');
+      if (url.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'm1' }] });
+      return jsonResponse({});
+    });
+    const options = resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3', apiKeyEnv: 'LLAMA_API_TOKEN', discovery: { ttlMs: 60_000 } });
+    const adapter = new LlamacppAdapter({
+      options: () => options,
+      resolveApiKey: async () => 'sekrit',
+      createClient: vi.fn(),
+    });
+    await adapter.discoverDraft({ baseURL: 'http://draft' });
+    expect(seen.every((line) => line === 'Bearer sekrit')).toBe(true);
+  });
+
+  it('degrades a failed probe to an empty list instead of throwing', async () => {
+    stubFetch(() => jsonResponse({ error: 'boom' }, 500));
+    const adapter = new LlamacppAdapter({
+      options: () => resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3' }),
+      resolveApiKey: async () => undefined,
+      createClient: vi.fn(),
+    });
+    await expect(adapter.discoverDraft({ baseURL: 'http://draft' })).resolves.toEqual([]);
+  });
+
+  it('propagates caller cancellation so the interrogation settles promptly', async () => {
+    stubFetch((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    }));
+    const adapter = new LlamacppAdapter({
+      options: () => resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3' }),
+      resolveApiKey: async () => undefined,
+      createClient: vi.fn(),
+    });
+    const controller = new AbortController();
+    const pending = adapter.discoverDraft({ baseURL: 'http://draft', signal: controller.signal });
+    setTimeout(() => controller.abort(), 10);
+    const error = await pending.then(() => undefined, (e: unknown) => e);
+    expect((error as LlmError).code).toBe('ABORTED');
+  });
+
+  it('answers a provider-named request from adapter knowledge with no network call', async () => {
+    let calls = 0;
+    stubFetch((_url: string) => {
+      calls += 1;
+      if (_url.endsWith('/v1/models')) return jsonResponse({ data: [{ id: 'm1', meta: { n_ctx: 8192 } }] });
+      return jsonResponse({});
+    });
+    const options = resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3', discovery: { enabled: true, ttlMs: 60_000 } });
+    const adapter = new LlamacppAdapter({ options: () => options, resolveApiKey: async () => undefined, createClient: vi.fn() });
+    // Prime the discovery cache through the normal adapter path.
+    await adapter.listModels('llamacpp-local');
+    const before = calls;
+    const models = await adapter.discoverDraft({ provider: 'llamacpp-local' });
+    expect(calls).toBe(before); // no additional network traffic
+    expect(models.map((m) => m.id)).toEqual(['qwen3', 'm1']);
+    expect(models.find((m) => m.id === 'm1')).toMatchObject({ contextWindow: 8192 });
+  });
+
+  it('returns just the configured model when the provider is known but nothing is cached', async () => {
+    const adapter = new LlamacppAdapter({
+      options: () => resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3' }),
+      resolveApiKey: async () => undefined,
+      createClient: vi.fn(),
+    });
+    await expect(adapter.discoverDraft({ provider: 'llamacpp-local' })).resolves.toEqual([{ id: 'qwen3' }]);
+  });
+
+  it('returns an empty list when neither an endpoint nor a route is named', async () => {
+    const adapter = new LlamacppAdapter({
+      options: () => resolveAdapterOptions({ baseURL: 'http://a', model: 'qwen3' }),
+      resolveApiKey: async () => undefined,
+      createClient: vi.fn(),
+    });
+    await expect(adapter.discoverDraft({})).resolves.toEqual([]);
+  });
+});

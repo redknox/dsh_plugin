@@ -128,6 +128,16 @@ export function apply(ctx: Context, config: ConfigType): void {
     },
   ]);
 
+  // Model discovery for the settings surface (issue #13): the GUI Models page
+  // can interrogate a draft it is still editing through
+  // `ctx.llm.discoverModels(NS, request)` — probing a typed baseURL with a
+  // one-shot credential, or answering from the adapter's own knowledge when
+  // the request names the already-registered route. Registered under the same
+  // namespace as the configurable-provider directory entry, which is what a
+  // settings surface already holds. Disposed with the fiber like the other
+  // registrations.
+  ctx.llm.registerModelDiscovery(NS, (request) => adapter.discoverDraft(request));
+
   // Registration is disposed with this fiber (Cordis effect semantics), so
   // plugin unload unregisters the route and the directory entry automatically.
   const registration = ctx.llm.registerAdapter([PROVIDER], adapter);
