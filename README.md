@@ -158,6 +158,41 @@ telemetry seam as a `routing` event:
 |---|---|---|
 | `routing` | `decision: { candidates, rationale }` | once per request, after capability selection |
 
+## Model and capability discovery (issue #10)
+
+Optional: discover llama.cpp model and server capabilities instead of
+requiring every capability to be configured manually. Off by default — a
+plain single-server deployment is unchanged; discovery failure never breaks a
+valid configured deployment.
+
+```yaml
+discovery:
+  enabled: true
+  ttlMs: 300000    # optional bounded cache TTL (default 300s)
+  timeoutMs: 5000  # optional per-probe timeout (default 5s)
+```
+
+What is probed and how:
+
+- `/v1/models` — exact model ids (`data[].id`, with the llama.cpp/ollama-style
+  `models[]` list also accepted) and context-window metadata from
+  `data[].meta.n_ctx` (falling back to `/props.n_ctx` for a single-model
+  slot).
+- `/props` — loaded model alias (used when the model list is unavailable) and
+  the slot context window.
+- Tool/reasoning support is only set when the server **explicitly** states it
+  (markers in a capabilities list); absence is "unknown", which routing treats
+  as assumed supported — discovery never causes a false negative that routes a
+  request away from a capable endpoint.
+
+Precedence: **user-configured endpoint capabilities (#9) win per field**;
+discovered values fill the gaps. `listModels()` advertises the discovered
+model ids when discovery is enabled (falling back to the configured model when
+nothing is discovered); `resolveModel()` surfaces the merged context window.
+Per-request routing uses **freshly cached** discovered facts (non-blocking —
+routing never stalls on a probe); the cache refreshes on metadata queries
+(`listModels`/`resolveModel`) with a bounded TTL and honors cancellation.
+
 ## Observability (issue #8)
 
 Optional structured request telemetry, emitted through a narrow sink (no

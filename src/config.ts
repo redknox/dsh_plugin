@@ -79,6 +79,13 @@ const TelemetrySchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+/** llama.cpp model/capability discovery (issue #10); disabled by default. */
+const DiscoverySchema = z.object({
+  enabled: z.boolean().default(false),
+  ttlMs: z.number().step(1).min(1),
+  timeoutMs: z.number().step(1).min(1),
+});
+
 /** Endpoint capability metadata for capability-aware routing (issue #9). */
 const EndpointCapabilitiesSchema = z.object({
   models: z.array(z.string()),
@@ -135,6 +142,8 @@ export const Config = z.object({
   retryPolicy: RetryPolicySchema,
   /** Structured request telemetry (issue #8); disable to stop emission. */
   telemetry: TelemetrySchema,
+  /** Model/capability discovery (issue #10); off keeps single-server simple. */
+  discovery: DiscoverySchema,
   /** Semantic Qwen reasoning controls (presets + expert overrides). */
   reasoning: ReasoningSchema,
 });
@@ -160,6 +169,8 @@ export type ConfigType = {
   retryPolicy?: RetryPolicyConfig;
   /** Structured request telemetry (issue #8). */
   telemetry?: { enabled?: boolean };
+  /** Model/capability discovery (issue #10). */
+  discovery?: { enabled?: boolean; ttlMs?: number; timeoutMs?: number };
   /** Semantic Qwen reasoning controls. */
   reasoning?: {
     enabled?: boolean;
@@ -196,6 +207,8 @@ export interface ResolvedAdapterOptions {
   readonly retryPolicy: ResolvedRetryPolicy;
   /** Structured request telemetry toggle (issue #8). */
   readonly telemetry: { enabled: boolean };
+  /** Model/capability discovery tuning (issue #10). */
+  readonly discovery: { enabled: boolean; ttlMs?: number; timeoutMs?: number };
   readonly reasoning: ReasoningPolicyConfig;
 }
 
@@ -296,6 +309,11 @@ export function resolveAdapterOptions(config: ConfigType): ResolvedAdapterOption
     ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
     retryPolicy: resolveRetryPolicy(config.retryPolicy, 'llm-llamacpp: retryPolicy'),
     telemetry: { enabled: config.telemetry?.enabled ?? true },
+    discovery: {
+      enabled: config.discovery?.enabled ?? false,
+      ...(config.discovery?.ttlMs !== undefined ? { ttlMs: config.discovery.ttlMs } : {}),
+      ...(config.discovery?.timeoutMs !== undefined ? { timeoutMs: config.discovery.timeoutMs } : {}),
+    },
     reasoning,
   };
 }

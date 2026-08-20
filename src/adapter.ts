@@ -25,10 +25,17 @@ import {
 } from '@deepseek-ai/dsh-llm';
 import {
   LlamaCppClient,
+  type LlamaCppAuth,
   type LlamaCppClientOptions,
 } from './client.ts';
 import type { LlamaCppChatCompletionChunk, LlamaCppChatCompletionRequest } from './protocol.ts';
 import type { ResolvedAdapterOptions } from './config.ts';
+import {
+  EndpointDiscovery,
+  mergeCapabilities,
+  type DiscoveredModel,
+  type DiscoveryOptions,
+} from './discovery.ts';
 import {
   buildReasoningPolicy,
   reasoningEfforts,
@@ -42,7 +49,8 @@ import {
 import {
   CapabilityRoutingPolicy,
   deriveWorkload,
-  routeEndpoints,
+  type EndpointCapabilities,
+  type EndpointRoutingProfile,
   type RoutingPolicy,
   type RoutingRequest,
 } from './routing.ts';
@@ -82,6 +90,8 @@ export interface LlamacppAdapterDeps {
   readonly telemetry?: () => TelemetrySink;
   /** Optional routing policy (issue #9); defaults to capability routing. */
   readonly routing?: RoutingPolicy;
+  /** Optional discovery factory (issue #10); defaults to the real probe client. */
+  readonly discovery?: (baseURL: string, options: DiscoveryOptions) => EndpointDiscovery;
 }
 
 /** Rough prompt-size estimate in tokens (~4 chars/token) for policy context. */
@@ -118,6 +128,21 @@ function defaultCreateClient(baseURL: string, options: LlamaCppClientOptions): L
 const defaultRoutingPolicy: RoutingPolicy = new CapabilityRoutingPolicy();
 
 /**
+ * Configured endpoint capabilities that apply to one model: the first profile
+ * in configuration order that explicitly serves the model, else the first
+ * profile with no model restriction. `undefined` means no configured facts.
+ */
+function configuredCapabilitiesFor(
+  model: string,
+  profiles: readonly EndpointRoutingProfile[],
+): EndpointCapabilities | undefined {
+  const unrestricted = profiles.find((profile) => profile.capabilities?.models === undefined || profile.capabilities.models.length === 0);
+  const serving = profiles.find((profile) => profile.capabilities?.models?.includes(model));
+  const chosen = serving ?? (unrestricted?.capabilities !== undefined ? unrestricted : undefined);
+  return chosen?.capabilities;
+}
+
+/**
  * Adapter for the `llamacpp-local` provider route. One instance serves every
  * model name: the harness model id IS the wire model id.
  */
@@ -125,6 +150,8 @@ export class LlamacppAdapter extends LlmAdapter {
   readonly deps: LlamacppAdapterDeps;
   /** Persistent endpoint health state across requests (reliability layer). */
   readonly pool: EndpointPool;
+  /** Per-endpoint discovery managers (issue #10), cached for TTL persistence. */
+  private readonly discoveryByUrl = new Map<string, EndpointDiscovery>();
 
   constructor(deps: LlamacppAdapterDeps) {
     super();
@@ -141,27 +168,117 @@ export class LlamacppAdapter extends LlmAdapter {
     return this.deps.options().retryPolicy;
   }
 
-  override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    const { model } = this.deps.options();
-    return Promise.resolve([
+  private discoveryFor(baseURL: string, auth?: LlamaCppAuth): EndpointDiscovery {
+    let discovery = this.discoveryByUrl.get(baseURL);
+    if (discovery === undefined) {
+      const opts = this.deps.options();
+      const create = this.deps.discovery ?? ((url: string, options: DiscoveryOptions) => new EndpointDiscovery(url, options));
+      discovery = create(baseURL, {
+        ...(opts.discovery.ttlMs !== undefined ? { ttlMs: opts.discovery.ttlMs } : {}),
+        ...(opts.discovery.timeoutMs !== undefined ? { timeoutMs: opts.discovery.timeoutMs } : {}),
+        ...(auth !== undefined ? { auth } : {}),
+      });
+      this.discoveryByUrl.set(baseURL, discovery);
+    }
+    return discovery;
+  }
+
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    const opts = this.deps.options();
+    if (opts.discovery.enabled) {
+      const discovered = await this.discoveredModels();
+      if (discovered.length > 0) {
+        return discovered.map((entry) => ({
+          provider,
+          id: entry.id,
+          name: entry.id,
+          inputModalities: ['text'],
+        }));
+      }
+    }
+    const { model } = opts;
+    return [
       {
         provider,
         id: model,
         name: model,
         inputModalities: ['text'],
       },
-    ]);
+    ];
   }
 
-  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const { reasoning } = this.deps.options();
-    const { efforts, defaultEffort } = reasoningEfforts(reasoning);
-    return Promise.resolve({
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const opts = this.deps.options();
+    const { efforts, defaultEffort } = reasoningEfforts(opts.reasoning);
+    // User-configured endpoint capabilities win over discovered facts
+    // (issue #10 precedence); discovery fills gaps when enabled.
+    const configured = configuredCapabilitiesFor(model, opts.endpointProfiles);
+    let discovered: DiscoveredModel | undefined;
+    if (opts.discovery.enabled) {
+      discovered = await this.findDiscovered(model, opts);
+    }
+    const merged = mergeCapabilities(configured, discovered);
+    return {
       provider,
       id: model,
       name: model,
       inputModalities: ['text'],
+      ...(merged.contextWindow !== undefined ? { context: { contextWindow: merged.contextWindow } } : {}),
       reasoning: { efforts, defaultEffort },
+    };
+  }
+
+  /** Union of discovered model ids across configured endpoints (deduped). */
+  private async discoveredModels(): Promise<readonly DiscoveredModel[]> {
+    const opts = this.deps.options();
+    const byId = new Map<string, DiscoveredModel>();
+    for (const profile of opts.endpointProfiles) {
+      const discovery = this.discoveryFor(profile.baseURL);
+      const result = await discovery.discover(); // graceful: never throws
+      for (const entry of result.models) {
+        if (byId.has(entry.id)) continue;
+        byId.set(entry.id, entry);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  /** First discovered facts matching the model across endpoints. */
+  private async findDiscovered(model: string, opts: ResolvedAdapterOptions): Promise<DiscoveredModel | undefined> {
+    for (const profile of opts.endpointProfiles) {
+      const discovery = this.discoveryFor(profile.baseURL);
+      const result = await discovery.discover(); // graceful: never throws
+      const match = result.models.find((entry) => entry.id === model);
+      if (match !== undefined) return match;
+    }
+    return undefined;
+  }
+
+  /**
+   * Routing profiles for one request: configured endpoint capabilities merged
+   * with DISCOVERED facts that are already in the fresh cache (non-blocking —
+   * routing never stalls on a probe; a stale cache simply means no enrichment
+   * this request). Configured capabilities win per field.
+   */
+  private routingProfiles(
+    opts: ResolvedAdapterOptions,
+    auth: LlamaCppAuth | undefined,
+    model: string,
+  ): readonly EndpointRoutingProfile[] {
+    if (!opts.discovery.enabled) return opts.endpointProfiles;
+    return opts.endpointProfiles.map((profile) => {
+      const cached = this.discoveryFor(profile.baseURL, auth).discoverCached();
+      const facts = cached?.models.find((entry) => entry.id === model);
+      const merged = mergeCapabilities(profile.capabilities, facts);
+      const capabilities: EndpointCapabilities = {
+        ...(profile.capabilities?.models !== undefined ? { models: profile.capabilities.models } : {}),
+        ...(profile.capabilities?.workload !== undefined ? { workload: profile.capabilities.workload } : {}),
+        ...(merged.contextWindow !== undefined ? { contextWindow: merged.contextWindow } : {}),
+        ...(merged.tools !== undefined ? { tools: merged.tools } : {}),
+        ...(merged.reasoning !== undefined ? { reasoning: merged.reasoning } : {}),
+      };
+      const hasCapabilities = Object.keys(capabilities).length > 0;
+      return { baseURL: profile.baseURL, ...(hasCapabilities ? { capabilities } : {}) };
     });
   }
 
@@ -273,7 +390,7 @@ export class LlamacppAdapter extends LlmAdapter {
       // The adapter depends only on the routing-policy seam; it has no
       // knowledge of the capability-filtering implementation.
       const routingPolicy = this.deps.routing ?? defaultRoutingPolicy;
-      const routing = routingPolicy.route(routingRequest, opts.endpointProfiles);
+      const routing = routingPolicy.route(routingRequest, this.routingProfiles(opts, auth, options.model));
       sink.emit({
         type: 'routing',
         requestId,
