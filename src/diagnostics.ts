@@ -21,6 +21,10 @@ import type { TelemetryEvent, TelemetrySink } from './telemetry.ts';
 export const MAX_LATENCY_WINDOW = 200;
 export const MAX_RECENT_ROUTING = 20;
 export const MAX_RECENT_FAILURES = 20;
+export const MAX_RATE_SAMPLES = 300;
+export const MAX_REASONING_BUDGET_WINDOW = 100;
+/** Request-rate observation window. */
+export const RATE_WINDOW_MS = 60_000;
 
 /** Latency aggregate over a bounded rolling window. */
 export interface LatencySummary {
@@ -40,6 +44,16 @@ export interface DiagnosticsEndpoint {
   readonly requests: number;
 }
 
+/** Structured model/capability facts (configured wins over discovered). */
+export interface DiagnosticsModel {
+  readonly id: string;
+  readonly contextWindow?: number;
+  readonly supportsTools?: boolean;
+  readonly supportsReasoning?: boolean;
+  /** `configured` (authoritative overrides) or `discovered` (cached #10 facts). */
+  readonly source: 'configured' | 'discovered';
+}
+
 /** Request counters over the store's lifetime (bounded aggregates). */
 export interface RequestSummary {
   readonly total: number;
@@ -53,6 +67,11 @@ export interface RequestSummary {
   readonly requestsWithTools: number;
   readonly requestsWithReasoning: number;
   readonly reasoningTokensTotal: number;
+  /** Requests per minute over the bounded rate window (extrapolated). */
+  readonly requestsPerMinute: number;
+  readonly reasoningByEffort: Record<string, number>;
+  /** Rolling reasoning-budget summary (bounded window). */
+  readonly reasoningBudgetTokens: LatencySummary;
   readonly byFailureCode: Record<string, number>;
   readonly byFinishReason: Record<string, number>;
   readonly byEndpoint: Record<string, number>;
@@ -77,8 +96,8 @@ export interface DiagnosticsSnapshot {
   readonly at: number;
   readonly uptimeMs: number;
   readonly endpoints: readonly DiagnosticsEndpoint[];
-  /** Configured model + cached discovered model ids when discovery is enabled. */
-  readonly models: readonly string[];
+  /** Structured model/capability facts (configured authoritative, #10 cached). */
+  readonly models: readonly DiagnosticsModel[];
   readonly requests: RequestSummary;
   readonly latency: {
     readonly ttftMs: LatencySummary;
@@ -107,10 +126,20 @@ function pushBounded(window: number[], value: number, cap: number): void {
   if (window.length > cap) window.shift();
 }
 
+/** Requests per minute over the last {@link RATE_WINDOW_MS}, extrapolated. */
+export function requestsPerMinute(startTimes: readonly number[], now: number): number {
+  const cutoff = now - RATE_WINDOW_MS;
+  const recent = startTimes.filter((timestamp) => timestamp >= cutoff);
+  if (recent.length === 0) return 0;
+  const spanMs = Math.max(now - Math.min(...recent), 1);
+  const minutes = spanMs / RATE_WINDOW_MS;
+  return Math.round((recent.length / minutes) * 10) / 10;
+}
+
 /**
  * Bounded diagnostics store: a telemetry sink that aggregates request
  * outcomes without retaining any content. Also accepts the endpoint pool and
- * model list at snapshot time so health/backoff state is reflected live.
+ * model facts at snapshot time so health/backoff state is reflected live.
  */
 export class DiagnosticsStore implements TelemetrySink {
   private readonly requests = {
@@ -125,12 +154,15 @@ export class DiagnosticsStore implements TelemetrySink {
     requestsWithTools: 0,
     requestsWithReasoning: 0,
     reasoningTokensTotal: 0,
+    reasoningByEffort: {} as Record<string, number>,
     byFailureCode: {} as Record<string, number>,
     byFinishReason: {} as Record<string, number>,
     byEndpoint: {} as Record<string, number>,
   };
   private readonly ttftWindow: number[] = [];
   private readonly totalWindow: number[] = [];
+  private readonly startTimes: number[] = [];
+  private readonly budgetWindow: number[] = [];
   private readonly routingWindow: RecentRouting[] = [];
   private readonly failureWindow: RecentFailure[] = [];
   private readonly startedAt = Date.now();
@@ -140,9 +172,16 @@ export class DiagnosticsStore implements TelemetrySink {
       case 'started':
         this.requests.total += 1;
         if (event.context.toolsAvailable) this.requests.requestsWithTools += 1;
+        pushBounded(this.startTimes, event.at, MAX_RATE_SAMPLES);
         break;
       case 'reasoning':
         if (event.decision.enabled) this.requests.requestsWithReasoning += 1;
+        if (event.decision.enabled && event.decision.effort !== undefined) {
+          this.requests.reasoningByEffort[event.decision.effort] = (this.requests.reasoningByEffort[event.decision.effort] ?? 0) + 1;
+        }
+        if (event.decision.budgetTokens !== undefined) {
+          pushBounded(this.budgetWindow, event.decision.budgetTokens, MAX_REASONING_BUDGET_WINDOW);
+        }
         break;
       case 'attempt':
         if (event.attempt.outcome === 'retry') this.requests.retries += 1;
@@ -184,7 +223,12 @@ export class DiagnosticsStore implements TelemetrySink {
   }
 
   /** Machine-readable snapshot, reflecting the current pool/model state. */
-  snapshot(pool?: EndpointPool, endpointUrls: readonly string[] = [], models: readonly string[] = []): DiagnosticsSnapshot {
+  snapshot(
+    pool?: EndpointPool,
+    endpointUrls: readonly string[] = [],
+    models: readonly DiagnosticsModel[] = [],
+    now: number = Date.now(),
+  ): DiagnosticsSnapshot {
     const endpoints: DiagnosticsEndpoint[] = endpointUrls.map((baseURL) => {
       const health = pool?.healthOf(baseURL) ?? { healthy: true, inBackoff: false };
       return {
@@ -194,12 +238,15 @@ export class DiagnosticsStore implements TelemetrySink {
       };
     });
     return {
-      at: Date.now(),
-      uptimeMs: Date.now() - this.startedAt,
+      at: now,
+      uptimeMs: now - this.startedAt,
       endpoints,
-      models: [...models],
+      models: models.map((entry) => ({ ...entry })),
       requests: {
         ...this.requests,
+        requestsPerMinute: requestsPerMinute(this.startTimes, now),
+        reasoningByEffort: { ...this.requests.reasoningByEffort },
+        reasoningBudgetTokens: latencySummary(this.budgetWindow),
         byFailureCode: { ...this.requests.byFailureCode },
         byFinishReason: { ...this.requests.byFinishReason },
         byEndpoint: { ...this.requests.byEndpoint },
@@ -214,7 +261,7 @@ export class DiagnosticsStore implements TelemetrySink {
   }
 
   /** Human-readable rendering for local operations/debugging. */
-  render(pool?: EndpointPool, endpointUrls: readonly string[] = [], models: readonly string[] = []): string {
+  render(pool?: EndpointPool, endpointUrls: readonly string[] = [], models: readonly DiagnosticsModel[] = []): string {
     const snapshot = this.snapshot(pool, endpointUrls, models);
     return renderDiagnostics(snapshot);
   }
@@ -234,9 +281,19 @@ export function renderDiagnostics(snapshot: DiagnosticsSnapshot): string {
       lines.push(`  ${endpoint.baseURL} — ${health} — ${endpoint.requests} requests`);
     }
   }
-  if (snapshot.models.length > 0) lines.push(`models: ${snapshot.models.join(', ')}`);
+  if (snapshot.models.length > 0) {
+    lines.push('models:');
+    for (const model of snapshot.models) {
+      const facts = [
+        model.contextWindow !== undefined ? `ctx ${model.contextWindow}` : undefined,
+        model.supportsTools !== undefined ? `tools ${model.supportsTools}` : undefined,
+        model.supportsReasoning !== undefined ? `reasoning ${model.supportsReasoning}` : undefined,
+      ].filter((f): f is string => f !== undefined);
+      lines.push(`  ${model.id} [${model.source}]${facts.length > 0 ? ` (${facts.join(', ')})` : ''}`);
+    }
+  }
   lines.push(
-    `requests: ${requests.total} total (${requests.success} ok, ${requests.failure} failed, ${requests.timeout} timeout, ${requests.aborted} aborted)`,
+    `requests: ${requests.total} total (${requests.success} ok, ${requests.failure} failed, ${requests.timeout} timeout, ${requests.aborted} aborted) @ ${requests.requestsPerMinute}/min`,
   );
   lines.push(`retries: ${requests.retries}, fallbacks: ${requests.fallbacks}`);
   lines.push(
@@ -246,7 +303,13 @@ export function renderDiagnostics(snapshot: DiagnosticsSnapshot): string {
     const avgReasoning = requests.requestsWithReasoning > 0
       ? Math.round(requests.reasoningTokensTotal / requests.requestsWithReasoning)
       : 0;
-    lines.push(`reasoning: ${requests.requestsWithReasoning} requests, ${requests.reasoningTokensTotal} tokens total (avg ${avgReasoning}/req)`);
+    const efforts = Object.entries(requests.reasoningByEffort);
+    const budget = requests.reasoningBudgetTokens;
+    lines.push(
+      `reasoning: ${requests.requestsWithReasoning} requests, ${requests.reasoningTokensTotal} tokens total (avg ${avgReasoning}/req)` +
+        `${efforts.length > 0 ? `; efforts ${efforts.map(([e, n]) => `${e}=${n}`).join(', ')}` : ''}` +
+        (budget.count > 0 ? `; budget avg ${budget.avgMs} (min ${budget.minMs}, max ${budget.maxMs})` : ''),
+    );
   }
   if (requests.toolCalls > 0) lines.push(`tools: ${requests.toolCalls} tool calls across ${requests.requestsWithTools} requests`);
   const failureCodes = Object.entries(requests.byFailureCode);

@@ -110,7 +110,7 @@ export function apply(ctx: Context, config: ConfigType): void {
   ]);
   const adapter = new LlamacppAdapter({ options, resolveApiKey, logger: ctx.logger, telemetry });
 
-  const modelList = (): string[] => [...new Set([options().model, ...adapter.cachedDiscoveredModels()])];
+  const modelList = (): readonly import('./diagnostics.ts').DiagnosticsModel[] => adapter.diagnosticModels();
   const endpointUrls = (): string[] => options().endpointProfiles.map((profile) => profile.baseURL);
   ctx.provide('llm-llamacpp/diagnostics', {
     /** Machine-readable snapshot (issue #12). */

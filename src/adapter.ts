@@ -60,6 +60,7 @@ import {
   type RoutingRequest,
 } from './routing.ts';
 import { serializeRequest } from './serialize.ts';
+import type { DiagnosticsModel } from './diagnostics.ts';
 import {
   NoopTelemetry,
   newRequestId,
@@ -252,6 +253,59 @@ export class LlamacppAdapter extends LlmAdapter {
       for (const entry of result?.models ?? []) ids.add(entry.id);
     }
     return [...ids];
+  }
+
+  /**
+   * Structured model/capability facts for diagnostics (issue #12): the
+   * configured model and every model named by configured endpoint
+   * capabilities (authoritative), merged with cached discovered facts when
+   * discovery is enabled (configured wins per field; `source` records which
+   * layer provided the row).
+   */
+  diagnosticModels(): DiagnosticsModel[] {
+    const opts = this.deps.options();
+    const facts = new Map<string, { contextWindow?: number; tools?: boolean; reasoning?: boolean; configured: boolean }>();
+    const configuredModel = opts.model;
+    const configured = configuredCapabilitiesFor(configuredModel, opts.endpointProfiles);
+    facts.set(configuredModel, { ...(configured !== undefined ? { contextWindow: configured.contextWindow, tools: configured.tools, reasoning: configured.reasoning } : {}), configured: true });
+    for (const profile of opts.endpointProfiles) {
+      const capabilities = profile.capabilities;
+      if (capabilities?.models === undefined) continue;
+      for (const id of capabilities.models) {
+        const existing = facts.get(id);
+        facts.set(id, {
+          contextWindow: capabilities.contextWindow ?? existing?.contextWindow,
+          tools: capabilities.tools ?? existing?.tools,
+          reasoning: capabilities.reasoning ?? existing?.reasoning,
+          configured: true,
+        });
+      }
+    }
+    if (opts.discovery.enabled) {
+      for (const profile of opts.endpointProfiles) {
+        const result = this.discoveryFor(profile.baseURL).discoverCached();
+        for (const entry of result?.models ?? []) {
+          const existing = facts.get(entry.id);
+          if (existing === undefined) {
+            facts.set(entry.id, { contextWindow: entry.contextWindow, tools: entry.supportsTools, reasoning: entry.supportsReasoning, configured: false });
+          } else if (!existing.configured) {
+            facts.set(entry.id, {
+              contextWindow: existing.contextWindow ?? entry.contextWindow,
+              tools: existing.tools ?? entry.supportsTools,
+              reasoning: existing.reasoning ?? entry.supportsReasoning,
+              configured: false,
+            });
+          }
+        }
+      }
+    }
+    return [...facts.entries()].map(([id, fact]) => ({
+      id,
+      ...(fact.contextWindow !== undefined ? { contextWindow: fact.contextWindow } : {}),
+      ...(fact.tools !== undefined ? { supportsTools: fact.tools } : {}),
+      ...(fact.reasoning !== undefined ? { supportsReasoning: fact.reasoning } : {}),
+      source: fact.configured ? 'configured' : 'discovered',
+    }));
   }
 
   /** Union of discovered model ids across configured endpoints (deduped). */

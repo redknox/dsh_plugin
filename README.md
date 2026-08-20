@@ -244,10 +244,14 @@ The plugin provides the context service `llm-llamacpp/diagnostics` with:
 - `snapshot()` — machine-readable snapshot (framework-independent API):
   - `endpoints` — configured endpoints with health/backoff state (from the
     reliability pool) and request volume;
-  - `models` — configured model plus cached discovered model ids (#10);
-  - `requests` — totals by outcome (success/failure/timeout/aborted), retries
-    and fallbacks, tool-call activity, reasoning token usage, and breakdowns
-    by endpoint / failure code / finish reason;
+  - `models` — **structured model/capability facts** (id, context window,
+    tool/reasoning support, `source: configured | discovered`) with
+    configured overrides authoritative over #10 cached discovery;
+  - `requests` — totals by outcome (success/failure/timeout/aborted),
+    retries and fallbacks, tool-call activity, **request rate (requests/min
+    over a bounded 60s window, extrapolated)**, **reasoning aggregates**
+    (requests with reasoning, effort distribution, rolling budget window,
+    token totals), and breakdowns by endpoint / failure code / finish reason;
   - `latency` — bounded rolling windows (last 200 samples) for TTFT and total
     latency (avg/min/max);
   - `recentRouting` / `recentFailures` — bounded (20 each) recent decisions

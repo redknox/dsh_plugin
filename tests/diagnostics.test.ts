@@ -4,11 +4,29 @@
  * emits machine-readable snapshots plus a human-readable render — all
  * content-free, bounded, and deterministic.
  */
-import { describe, expect, it } from 'vitest';
-import { DiagnosticsStore, MAX_LATENCY_WINDOW, MAX_RECENT_FAILURES, MAX_RECENT_ROUTING, renderDiagnostics } from '../src/diagnostics.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DiagnosticsStore, MAX_LATENCY_WINDOW, MAX_RECENT_FAILURES, MAX_RECENT_ROUTING, renderDiagnostics, requestsPerMinute } from '../src/diagnostics.ts';
 import { EndpointPool } from '../src/reliability.ts';
 import type { RequestOutcome, TelemetryEvent } from '../src/telemetry.ts';
 import type { ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm';
+import { LlamacppAdapter } from '../src/adapter.ts';
+import { resolveAdapterOptions } from '../src/config.ts';
+
+const fetchMock = vi.fn();
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  fetchMock.mockReset();
+});
+
+function stubFetch(handler: (url: string) => Response): void {
+  fetchMock.mockImplementation((url: string) => handler(String(url)));
+  vi.stubGlobal('fetch', fetchMock);
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
 
 function started(requestId: string, tools = false): TelemetryEvent {
   return { type: 'started', requestId, at: 1, context: { model: 'qwen3', toolsAvailable: tools } };
@@ -126,11 +144,47 @@ describe('DiagnosticsStore', () => {
     store.emit(started('r1'));
     store.emit(attempt('r1', 'selected', 'http://a'));
     store.emit(finished('r1', { endpoint: 'http://a', totalMs: 150, ttftMs: 40 }));
-    const text = store.render(undefined, ['http://a'], ['qwen3']);
+    const text = store.render(undefined, ['http://a'], [{ id: 'qwen3', source: 'configured' }]);
     expect(text).toContain('llm-llamacpp diagnostics');
     expect(text).toContain('http://a');
     expect(text).toContain('requests: 1 total (1 ok');
     expect(text).toContain('total avg 150ms');
+    expect(text).toContain('qwen3 [configured]');
+  });
+
+  it('computes a deterministic request rate over the bounded window (review regression)', () => {
+    const store = new DiagnosticsStore();
+    // Started events carry fixed `at: 1`; three starts within the 60s window
+    // ending at a fixed `now` give a deterministic 3/min.
+    store.emit(started('r1'));
+    store.emit(started('r2'));
+    store.emit(started('r3'));
+    const snapshot = store.snapshot(undefined, [], [], 60_001);
+    expect(snapshot.requests.requestsPerMinute).toBe(3);
+    // Extrapolation over a shorter span: 3 starts in 30s -> 6/min.
+    expect(requestsPerMinute([0, 10_000, 20_000], 30_000)).toBe(6);
+    // Empty window and stale-outside-window starts contribute nothing.
+    expect(requestsPerMinute([], 60_000)).toBe(0);
+    expect(requestsPerMinute([0], 120_000)).toBe(0);
+    // A second snapshot at a different fixed `now` drops the window.
+    expect(store.snapshot(undefined, [], [], 120_000).requests.requestsPerMinute).toBe(0);
+  });
+
+  it('aggregates reasoning effort and budget from reasoning events (review regression)', () => {
+    const store = new DiagnosticsStore();
+    store.emit(reasoning('r1', true)); // medium, budget 4096
+    store.emit(finished('r1', { endpoint: 'http://a', totalMs: 10, usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 500 } }));
+    store.emit(started('r2'));
+    store.emit(reasoning('r2', true)); // medium again
+    store.emit(finished('r2', { endpoint: 'http://a', totalMs: 20, usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 700 } }));
+    store.emit(started('r3'));
+    store.emit(reasoning('r3', true)); // medium again
+    store.emit(finished('r3', { endpoint: 'http://a', totalMs: 30, usage: { inputTokens: 1, outputTokens: 1, reasoningTokens: 900 } }));
+    const snapshot = store.snapshot();
+    expect(snapshot.requests.requestsWithReasoning).toBe(3);
+    expect(snapshot.requests.reasoningByEffort).toEqual({ medium: 3 });
+    expect(snapshot.requests.reasoningTokensTotal).toBe(2100);
+    expect(snapshot.requests.reasoningBudgetTokens).toEqual({ count: 3, avgMs: 4096, minMs: 4096, maxMs: 4096 });
   });
 });
 
@@ -141,11 +195,39 @@ describe('renderDiagnostics', () => {
       uptimeMs: 0,
       endpoints: [],
       models: [],
-      requests: { total: 0, success: 0, failure: 0, timeout: 0, aborted: 0, retries: 0, fallbacks: 0, toolCalls: 0, requestsWithTools: 0, requestsWithReasoning: 0, reasoningTokensTotal: 0, byFailureCode: {}, byFinishReason: {}, byEndpoint: {} },
+      requests: { total: 0, success: 0, failure: 0, timeout: 0, aborted: 0, retries: 0, fallbacks: 0, toolCalls: 0, requestsWithTools: 0, requestsWithReasoning: 0, reasoningTokensTotal: 0, requestsPerMinute: 0, reasoningByEffort: {}, reasoningBudgetTokens: { count: 0, avgMs: 0 }, byFailureCode: {}, byFinishReason: {}, byEndpoint: {} },
       latency: { ttftMs: { count: 0, avgMs: 0 }, totalMs: { count: 0, avgMs: 0 } },
       recentRouting: [],
       recentFailures: [],
     });
     expect(text).toContain('llm-llamacpp diagnostics');
+  });
+});
+
+describe('diagnostic model facts', () => {
+  it('exposes structured capabilities with configured overrides authoritative (review regression)', async () => {
+    stubFetch((url) => (
+      url.endsWith('/v1/models')
+        ? jsonResponse({ data: [
+            { id: 'qwen3', meta: { n_ctx: 8192 } },
+            { id: 'other-model', meta: { n_ctx: 16_384 } },
+          ] })
+        : jsonResponse({})
+    ));
+    const options = resolveAdapterOptions({
+      baseURL: 'http://a',
+      endpoints: [{ url: 'http://a', capabilities: { models: ['qwen3'], contextWindow: 4096, tools: false } }],
+      discovery: { enabled: true, ttlMs: 60_000 },
+    });
+    const adapter = new LlamacppAdapter({ options: () => options, resolveApiKey: async () => undefined, createClient: vi.fn() });
+    await adapter.listModels('llamacpp-local'); // primes the discovery cache
+
+    const models = adapter.diagnosticModels();
+    const qwen3 = models.find((m) => m.id === 'qwen3');
+    // Configured facts win: discovered n_ctx 8192 does NOT override 4096.
+    expect(qwen3).toMatchObject({ id: 'qwen3', source: 'configured', contextWindow: 4096, supportsTools: false });
+    // A purely discovered model keeps discovered facts with its source.
+    const other = models.find((m) => m.id === 'other-model');
+    expect(other).toMatchObject({ id: 'other-model', source: 'discovered', contextWindow: 16_384 });
   });
 });
