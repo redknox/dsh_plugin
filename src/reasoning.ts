@@ -1,6 +1,6 @@
 /**
- * Qwen reasoning/thinking controls: semantic presets, expert overrides, and
- * policy resolution.
+ * Semantic reasoning/thinking controls (model-family aware): presets, expert
+ * overrides, and policy resolution.
  *
  * The provider exposes stable *semantic* reasoning levels (`off`, `low`,
  * `medium`, `xhigh`) to Harness users; `resolveReasoningPolicy` turns the
@@ -8,7 +8,9 @@
  * fields are still semantic — `effort` and `budgetTokens` stay separate
  * concepts. Only the adapter/request-builder layer (`serialize.ts`) translates
  * a resolved policy into concrete llama.cpp request fields, because those wire
- * fields depend on the installed llama.cpp/Qwen version (documented there).
+ * fields depend on the installed llama.cpp version and the model family
+ * (Qwen chat-template kwargs vs llama.cpp-native reasoning fields; see
+ * `compat.ts`).
  *
  * Issue #6 adds an optional adaptive layer: when `adaptive.enabled`, the
  * resolved preset budget is adjusted deterministically from request context

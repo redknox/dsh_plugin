@@ -13,7 +13,7 @@
  *   node examples/tool-call.mjs
  *   LLAMACPP_BASE_URL=http://127.0.0.1:8081 LLAMACPP_MODEL=qwen3 node examples/tool-call.mjs
  *
- * Requires a running llama.cpp server with a tool-capable Qwen model.
+ * Requires a running llama.cpp server with a tool-capable model (Qwen validated).
  */
 import { Context } from '@deepseek-ai/cordis';
 import LlmRuntime, {
@@ -104,7 +104,7 @@ try {
   console.log(`\nfinish: ${first.finish.kind}${first.usage ? ` | usage: ${JSON.stringify(first.usage)}` : ''}`);
   if (first.finish.kind === 'error' || first.finish.kind === 'aborted') {
     console.error(`\nturn failed: ${JSON.stringify(first.finish)}`);
-    console.error('Is a llama.cpp server running with a tool-capable Qwen model?');
+    console.error('Is a llama.cpp server running with a tool-capable model (Qwen validated)?');
     process.exitCode = 1;
     process.exit();
   }
@@ -132,7 +132,7 @@ try {
   console.log(`\nfinish: ${second.finish.kind}`);
 } catch (error) {
   console.error(`\nfailed: ${error?.message ?? error}`);
-  console.error('Is a llama.cpp server running with a tool-capable Qwen model?');
+  console.error('Is a llama.cpp server running with a tool-capable model (Qwen validated)?');
   process.exitCode = 1;
 } finally {
   try {

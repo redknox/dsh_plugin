@@ -1,18 +1,32 @@
 # llm-llamacpp
 
-DeepSeek Harness LLM provider plugin targeting a local
-[llama.cpp](https://github.com/ggml-org/llama.cpp) server through its
-OpenAI-compatible `/v1/chat/completions` endpoint, designed for locally hosted
-Qwen models.
+> **A production-oriented llama.cpp LLM provider for DeepSeek Harness, with
+> first-class Qwen reasoning support**, streaming tool calls, adaptive
+> inference policies, multi-endpoint reliability, capability-aware routing,
+> model/capability discovery, observability, and diagnostics.
+
+`llm-llamacpp` targets **[llama.cpp](https://github.com/ggml-org/llama.cpp)** as
+the provider/backend, through its OpenAI-compatible
+`/v1/chat/completions` endpoint — it is **not** a Qwen-only plugin. Any model
+family a llama.cpp build serves (Qwen, Llama, Gemma, DeepSeek, …) can be
+addressed; the runtime is llama.cpp-generic (streaming, tool calls,
+reliability, routing, discovery, observability, diagnostics), while
+model-family behavior — above all **Qwen's chat-template reasoning/thinking
+semantics** — is isolated behind explicit compatibility profiles
+(`modelFamily`, see [Reasoning](#reasoning)). **Qwen is the best-validated,
+first-class model family** (tested end-to-end against a real Qwen3.8 server);
+other families use the generic path and are expected to work but are not yet
+claimed as verified.
 
 The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
 `ctx.llm` service contract only — no agent-loop internals are touched.
 
-> **Status.** Issues #1-#7 all implemented, approved, and validated end-to-end
-> against a real llama.cpp Qwen3.8 server: text streaming with reasoning,
-> parallel tool calls, reasoning off/on and both wire modes, and multi-endpoint
-> fallback on real network failures.
+> **Status.** Issues #1-#15 implemented, approved, and validated end-to-end
+> against a real llama.cpp server running the Qwen3.8 family: text streaming
+> with reasoning, parallel tool calls, reasoning off/on and both wire modes,
+> multi-endpoint fallback on real network failures, model/capability
+> discovery, diagnostics, and the DSH-native Git install path.
 
 ## Requirements
 
@@ -20,8 +34,9 @@ DeepSeek Harness as a Cordis plugin and registers itself through the public
   `@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-settings`,
   and `@deepseek-ai/dsh-credentials` as peer dependencies.
 - A llama.cpp server with an OpenAI-compatible endpoint
-  (e.g. `llama-server -m path/to/qwen3.gguf --port 8080`), optionally started
-  with `--api-key <token>`.
+  (e.g. `llama-server -m path/to/qwen3.gguf --port 8080` for the Qwen family;
+  any family the build serves works), optionally started with
+  `--api-key <token>`.
 
 ## Installation
 
@@ -86,8 +101,8 @@ trailing slash. Local default is `http://127.0.0.1:8080`.
 ### `model` (model id)
 
 The exact model id the server accepts, listed by `GET /v1/models`. It is
-passed to the wire `model` field verbatim, so changing Qwen models needs no
-plugin reload.
+passed to the wire `model` field verbatim, so changing models needs no plugin
+reload.
 
 ### `apiKeyEnv` (token — never put the key in config)
 
@@ -308,30 +323,45 @@ any request payload. Cardinality is bounded per request (≤ 1 + attempts + 1
 events); nothing is retained by the plugin itself (issue #12 adds a bounded
 in-memory diagnostic snapshot consuming this same surface).
 
-## Reasoning (Qwen thinking)
+## Reasoning
 
-The provider exposes stable semantic levels (`off`, `low`, `medium`, `xhigh`)
-through `resolveModel`/`ctx.llm.resolveModelInfo`, selectable as
+Optional semantic reasoning/thinking controls. The provider exposes stable
+semantic levels (`off`, `low`, `medium`, `xhigh`) through
+`resolveModel`/`ctx.llm.resolveModelInfo`, selectable as
 `GenerateOptions.reasoningEffort`. Effort (semantic) and `budgetTokens`
 (runtime thinking budget) are separate concepts; the built-in preset table
 maps each level, and the `reasoning.expert` config overrides individual fields
 without rewriting the table. Per-request effort wins over the configured
 preset; `session-title` calls always disable thinking.
 
+**Model-family awareness (issue #18).** Whether thinking wire fields are sent
+at all is gated by the model-family compatibility profile
+(`modelFamily: 'auto' | 'qwen'`, default `'auto'` → `unknown`). A family whose
+template-kwargs support is unknown (the default) gets **no** reasoning wire
+fields (`wire: 'none'`) — nothing Qwen-oriented is ever sent silently; only
+explicit configuration, capability metadata, or an explicit family profile
+(Qwen) opts into them. Qwen is the first-class, best-validated reasoning
+family: select `modelFamily: 'qwen'` (and/or an explicit `reasoning.wire`) for
+Qwen chat-template semantics.
+
 The resolved policy is translated to llama.cpp request fields only in the
 request builder, and the fields are version-dependent:
 
-- `wire: chat-template-kwargs` (default): `chat_template_kwargs = {
-  enable_thinking, preserve_thinking? }` — Qwen chat-template kwargs honored
-  by llama.cpp builds with the per-request template-kwargs hook (llama.cpp
-  PR #13196). The runtime thinking budget is a separate inference control and
-  is sent as the top-level `thinking_budget_tokens` per-request field.
-- `wire: reasoning-fields`: top-level `reasoning_effort` (including `"none"`)
-  and `thinking_budget_tokens`. Requires newer llama.cpp builds with native
-  per-request reasoning support (PRs #22336 / #23116 / #26045).
+- `wire: chat-template-kwargs`: `chat_template_kwargs = { enable_thinking,
+  preserve_thinking? }` — **Qwen chat-template kwargs** honored by llama.cpp
+  builds with the per-request template-kwargs hook (llama.cpp PR #13196);
+  this is the default for the Qwen profile and any explicit opt-in. The
+  runtime thinking budget is a separate inference control and is sent as the
+  top-level `thinking_budget_tokens` per-request field.
+- `wire: reasoning-fields`: top-level `reasoning_effort` (including
+  `"none"`) and `thinking_budget_tokens` — llama.cpp-native fields, usable by
+  any family on explicit configuration. Requires newer llama.cpp builds with
+  native per-request reasoning support (PRs #22336 / #23116 / #26045).
   `preserve_thinking` is a chat-template kwarg that llama.cpp merges
   independently of the native fields, so it rides alongside them in either
   wire mode.
+- `wire: none` (default for unknown families): no reasoning wire fields are
+  sent at all.
 
 Semantics of the expert knobs:
 
@@ -402,7 +432,7 @@ emitting an unusable empty-branded call. Tool execution stays with Harness
 
 ### End-to-end example
 
-With a running llama.cpp server and a tool-capable Qwen model:
+With a running llama.cpp server and a tool-capable model (Qwen validated):
 
 ```bash
 npm run build
@@ -466,7 +496,8 @@ src/
 ├── client.ts       # llama.cpp HTTP/SSE transport client
 ├── serialize.ts    # GenerateOptions -> llama.cpp wire request
 ├── translate.ts    # llama.cpp wire chunks -> Harness StreamChunks
-├── reasoning.ts    # Qwen reasoning policy/presets
+├── reasoning.ts    # semantic reasoning policy/presets (model-family aware)
+├── compat.ts       # model-family compatibility profiles (Qwen vs unknown)
 ├── protocol.ts     # llama.cpp request/response wire types
 └── config.ts       # plugin config schema and validation
 tests/              # vitest suites (mock-based; no Harness core required)

@@ -1,7 +1,7 @@
 {
   "name": "llm-llamacpp",
   "version": "0.1.0",
-  "description": "DeepSeek Harness LLM provider plugin targeting a local llama.cpp (Qwen) server",
+  "description": "A production-oriented llama.cpp LLM provider for DeepSeek Harness, with first-class Qwen reasoning support: streaming tool calls, adaptive inference policies, multi-endpoint reliability, capability-aware routing, discovery, observability, and diagnostics.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",

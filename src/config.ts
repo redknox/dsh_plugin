@@ -177,7 +177,7 @@ export const Config = z.object({
   discovery: DiscoverySchema,
   /** Bounded production diagnostics (issue #12). */
   diagnostics: DiagnosticsSchema,
-  /** Semantic Qwen reasoning controls (presets + expert overrides). */
+  /** Semantic reasoning controls (model-family aware; Qwen is the validated family). */
   reasoning: ReasoningSchema,
 });
 
@@ -208,7 +208,7 @@ export type ConfigType = {
   discovery?: { enabled?: boolean; ttlMs?: number; timeoutMs?: number };
   /** Bounded production diagnostics (issue #12). */
   diagnostics?: { enabled?: boolean };
-  /** Semantic Qwen reasoning controls. */
+  /** Semantic reasoning controls (model-family aware). */
   reasoning?: {
     enabled?: boolean;
     preset?: ReasoningLevel;
