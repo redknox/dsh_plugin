@@ -136,6 +136,17 @@ endpoint, or an empty `model`/`providerName` fails clearly. When the harness
 settings service is mounted, the same schema drives an `llm-llamacpp` settings
 section that can override any field without a restart.
 
+### Settings-page presentation (issue #19)
+
+The DSH Models page renders this plugin through the generic schema-driven
+provider editor (upstream `GenericSchemaEditor`). The plugin supplies
+**advisory presentation metadata** through its schema — semantic groups that
+start collapsed, human-readable labels, and one-line field help — so basic
+settings stay immediately visible and advanced sections (Reasoning,
+Reliability, Endpoints, Discovery, Diagnostics, Telemetry) are collapsible.
+The mechanism is provider-generic; any configurable provider can declare the
+same hints and no provider family is hard-coded in the editor.
+
 ## Capability-aware endpoint routing (issue #9)
 
 Evolve ordered fallback into capability-aware routing: an eligible endpoint

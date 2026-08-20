@@ -14,7 +14,7 @@ Branch `feat/generic-provider-editor` in `deepseek-ai/deepseek-harness`
 - **`packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx`**
   (new) — renders any configurable provider's own `settings.describe` schema
   as editable fields: strings, booleans, enum/union-of-literal choices,
-  numbers, and simple nested objects (collapsible groups). Unsupported
+  numbers, and simple nested objects. Unsupported
   constructs (array/dict/any/heterogeneous union/…) are surfaced explicitly
   with an "edit in settings.yaml" hint and are never rebuilt or dropped by a
   save. A `model` string field gains an optional discovery-backed picker
@@ -23,7 +23,14 @@ Branch `feat/generic-provider-editor` in `deepseek-ai/deepseek-harness`
   field declared with Schemastery's typed `.extra('extra', {controls:
   ['sibling', …]})` metadata disables those sibling fields while it is off
   (e.g. `reasoning.enabled` → `['preset']`) — schema-driven, usable by any
-  provider, never a hard-coded family rule.
+  provider, never a hard-coded family rule. **Semantic groups + field help
+  (issue #19)**: providers declare advisory presentation hints through
+  `.extra('extra', {ui: {label, description, collapsed}})` — top-level object
+  fields render as collapsible semantic groups (label from `ui.label`,
+  humanized key fallback; collapsed from `ui.collapsed`, default expanded),
+  scalar fields stay visible, field labels honor `ui.label`, and
+  `ui.description` renders as one short line of help under the control.
+  Absent/malformed `ui` metadata degrades to the previous behavior.
 - **`ProviderEditor.tsx`** — unknown namespaces now render the shared
   credential field plus the generic editor, and submit is no longer disabled
   for them. Writes stay on the existing `settings.mutate` path-ops +
@@ -31,11 +38,13 @@ Branch `feat/generic-provider-editor` in `deepseek-ai/deepseek-harness`
   semantics are unchanged. Curated `deepseek`/`pi-ai` layouts are untouched.
 - **`locales.ts`** — `genericOptional` / `genericRequired` /
   `genericUnsupported` / `genericModelFetch` (en + zh).
-- **Tests** — `tests/generic-editor.client.spec.tsx` (9 cases: render of
+- **Tests** — `tests/generic-editor.client.spec.tsx` (12 cases: render of
   every supported primitive, minimal path-op saves, nested-object subtree
-  save, master-switch controls, credential isolation via `credentials.set`,
-  discovery success and failure fallback, and an unrelated synthetic
-  provider proving the fallback is not llama.cpp-specific); two existing
+  save, master-switch controls, semantic groups + collapsed state + field
+  label/description, ui-metadata fallback, credential isolation via
+  `credentials.set`, discovery success and failure fallback, and an
+  unrelated synthetic provider proving the fallback is not llama.cpp-
+  specific); two existing
   cases updated to the new unknown-namespace behavior. Suite: 231 tests
   green.
 

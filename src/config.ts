@@ -133,12 +133,18 @@ const EndpointSchema = z.union([
  * but not a valid http(s) URL (see {@link resolveAdapterOptions}).
  */
 export const Config = z.object({
-  /** Base URL of the llama.cpp OpenAI-compatible server, e.g. `http://127.0.0.1:8080`. */
-  baseURL: z.string().default(DEFAULT_BASE_URL),
+  /**
+   * Base URL of the llama.cpp OpenAI-compatible server, e.g. `http://127.0.0.1:8080`.
+   * UI metadata (issue #19): user-facing label + concise help for the generic editor.
+   */
+  baseURL: z.string().default(DEFAULT_BASE_URL)
+    .extra('extra', { ui: { label: 'Base URL', description: 'OpenAI-compatible endpoint of the llama.cpp server.' } }),
   /** Human-readable provider name surfaced by selectors and diagnostics. */
-  providerName: z.string().default(DEFAULT_PROVIDER_NAME),
+  providerName: z.string().default(DEFAULT_PROVIDER_NAME)
+    .extra('extra', { ui: { label: 'Display name', description: 'Name shown in model selectors and diagnostics.' } }),
   /** Default model id sent to the wire `model` field. */
-  model: z.string().default(DEFAULT_MODEL),
+  model: z.string().default(DEFAULT_MODEL)
+    .extra('extra', { ui: { label: 'Model', description: 'Model id the server accepts, as listed by /v1/models.' } }),
   /**
    * Explicit model-family selector (issue #18). `'auto'` resolves without a
    * model-name heuristic to the `unknown` compatibility profile — nothing is
@@ -146,39 +152,50 @@ export const Config = z.object({
    * Qwen compatibility profile explicitly. Explicit `reasoning.wire` always
    * beats either profile's default.
    */
-  modelFamily: z.union(['auto', 'qwen']).default('auto'),
+  modelFamily: z.union(['auto', 'qwen']).default('auto')
+    .extra('extra', { ui: { label: 'Model family', description: 'Enables model-family compatibility behavior; keep Auto when unsure.' } }),
   /**
    * Optional environment variable naming the API key. Local llama.cpp needs
    * none; a reverse proxy in front of it may require one. The value is read
    * per request and never stored in the settings document.
    */
-  apiKeyEnv: z.string().role('credential-ref'),
+  apiKeyEnv: z.string().role('credential-ref')
+    .extra('extra', { ui: { label: 'API key env var', description: 'Environment variable or credential reference for the API key.' } }),
   /** Header that carries the key: `authorization` sends `Bearer <key>`, anything else sends the raw key. */
-  apiKeyHeader: z.string().default(DEFAULT_API_KEY_HEADER),
+  apiKeyHeader: z.string().default(DEFAULT_API_KEY_HEADER)
+    .extra('extra', { ui: { label: 'API key header', description: 'Header carrying the key; authorization sends Bearer <key>.' } }),
   /** Maximum idle interval (ms) for one outstanding provider stream read. */
-  streamIdleTimeoutMs: z.number().min(1).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+  streamIdleTimeoutMs: z.number().min(1).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS)
+    .extra('extra', { ui: { label: 'Stream idle timeout (ms)', description: 'How long a streaming response may stay idle before it is treated as timed out.' } }),
   /**
    * Hard per-request-attempt timeout (ms), regardless of activity. Optional;
    * absent means no total deadline (the idle watchdog still applies).
    */
-  requestTimeoutMs: z.number().step(1).min(1),
+  requestTimeoutMs: z.number().step(1).min(1)
+    .extra('extra', { ui: { label: 'Request timeout (ms)', description: 'Hard deadline for one request attempt; absent means no total deadline.' } }),
   /**
    * Ordered list of llama.cpp endpoint base URLs for fallback (issue #7),
    * optionally with capability metadata for capability-aware routing
    * (issue #9). When present it replaces `baseURL` as the candidate set; the
    * first entry is the primary. Omission keeps single-endpoint behavior.
    */
-  endpoints: z.array(EndpointSchema),
+  endpoints: z.array(EndpointSchema)
+    .extra('extra', { ui: { label: 'Endpoints', collapsed: true } }),
   /** Provider-owned retry policy (reliability layer, issue #7). */
-  retryPolicy: RetryPolicySchema,
+  retryPolicy: RetryPolicySchema
+    .extra('extra', { ui: { label: 'Reliability', collapsed: true } }),
   /** Structured request telemetry (issue #8); disable to stop emission. */
-  telemetry: TelemetrySchema,
+  telemetry: TelemetrySchema
+    .extra('extra', { ui: { label: 'Telemetry', collapsed: true } }),
   /** Model/capability discovery (issue #10); off keeps single-server simple. */
-  discovery: DiscoverySchema,
+  discovery: DiscoverySchema
+    .extra('extra', { ui: { label: 'Discovery', collapsed: true } }),
   /** Bounded production diagnostics (issue #12). */
-  diagnostics: DiagnosticsSchema,
+  diagnostics: DiagnosticsSchema
+    .extra('extra', { ui: { label: 'Diagnostics', collapsed: true } }),
   /** Semantic reasoning controls (model-family aware; Qwen is the validated family). */
-  reasoning: ReasoningSchema,
+  reasoning: ReasoningSchema
+    .extra('extra', { ui: { label: 'Reasoning', collapsed: true } }),
 });
 
 export type ConfigType = {

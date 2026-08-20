@@ -1,9 +1,9 @@
 diff --git a/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
 new file mode 100644
-index 0000000..12cf413
+index 0000000..dd7a760
 --- /dev/null
 +++ b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
-@@ -0,0 +1,434 @@
+@@ -0,0 +1,535 @@
 +/**
 + * Schema-driven editor for configurable providers the Models page has no
 + * curated family for (issue #14). Renders the provider's own
@@ -104,6 +104,41 @@ index 0000000..12cf413
 +    : undefined
 +}
 +
++/**
++ * Advisory presentation metadata (issue #19), declared by providers through
++ * Schemastery's generic `.extra('extra', {ui: {...}})` slot — never
++ * hard-coded per family:
++ *
++ *   z.object({...}).extra('extra', { ui: { label: 'Reliability', collapsed: true } })
++ *   baseURL: z.string().extra('extra', { ui: { label: 'Base URL', description: '…' } })
++ *
++ * - `label` — human-readable name shown instead of the schema key.
++ * - `description` — one short line of user-facing help, rendered under the
++ *   control (longer text should stay in the schema `comment`/tooltip).
++ * - `collapsed` — an object field (a semantic group) starts collapsed.
++ */
++export interface UiMeta {
++  label?: string
++  description?: string
++  collapsed?: boolean
++}
++
++/** Read a node's advisory UI metadata; absent/malformed → undefined (fall back). */
++function uiOf(field: SchemaNode): UiMeta | undefined {
++  const extra = (field.meta as { extra?: unknown }).extra
++  if (typeof extra !== 'object' || extra === null) return undefined
++  const ui = (extra as { ui?: unknown }).ui
++  if (typeof ui !== 'object' || ui === null) return undefined
++  return ui as UiMeta
++}
++
++/** `retryPolicy` → `Retry Policy`; fallback label for groups without ui.label. */
++function humanize(name: string): string {
++  return name
++    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
++    .replace(/^./, (ch) => ch.toUpperCase())
++}
++
 +/** The effective boolean of a switch field, mirroring the boolean branch. */
 +function effectiveBoolean(value: unknown, fallback: unknown, field: SchemaNode): boolean {
 +  if (typeof value === 'boolean') return value
@@ -130,18 +165,24 @@ index 0000000..12cf413
 +}): ReactNode {
 +  const { name, field, path, value, fallback, setNested, disabled, owner } = props
 +  const { schema, probe, api, t } = owner
++  const ui = uiOf(field)
 +  // The accessible name is the full dotted path so nested groups (e.g. a
 +  // `reasoning` object) never collide with their top-level namesakes.
 +  const ariaLabel = path.join('.')
++  const displayName = ui?.label ?? name
 +  const label = (
 +    <span className={styles['fieldLabel']}>
-+      {name}
++      {displayName}
 +      {' '}
 +      <span className={styles['modelCatalogMeta']}>
 +        {field.meta.required === true ? t('genericRequired') : t('genericOptional')}
 +      </span>
 +    </span>
 +  )
++  // One short line of user-facing help, rendered under the control.
++  const help = ui?.description === undefined || ui.description.length === 0
++    ? null
++    : <p className={styles['advancedHint']}>{ui.description}</p>
 +  const placeholder = typeof fallback === 'string' && fallback.length > 0
 +    ? fallback
 +    : typeof field.meta.default === 'string'
@@ -155,6 +196,7 @@ index 0000000..12cf413
 +      <div className={styles['field']}>
 +        {label}
 +        <p className={styles['advancedHint']}>{t('genericUnsupported')}</p>
++        {help}
 +      </div>
 +    )
 +  }
@@ -184,6 +226,7 @@ index 0000000..12cf413
 +        <div className={styles['field']}>
 +          {label}
 +          {input}
++          {help}
 +          <ModelPicker
 +            probe={probe}
 +            api={api}
@@ -198,6 +241,7 @@ index 0000000..12cf413
 +      <div className={styles['field']}>
 +        {label}
 +        {input}
++        {help}
 +      </div>
 +    )
 +  }
@@ -248,6 +292,7 @@ index 0000000..12cf413
 +          <option value="enabled">Enabled</option>
 +          <option value="disabled">Disabled</option>
 +        </select>
++        {help}
 +      </div>
 +    )
 +  }
@@ -272,14 +317,44 @@ index 0000000..12cf413
 +          disabled={disabled || field.meta.disabled === true}
 +          onChange={(event) => { setNested(path, numeric(event.target.value)) }}
 +        />
++        {help}
 +      </div>
 +    )
 +  }
 +
-+  // field.type === 'object' (the editable branch is exhaustive above): recurse.
-+  // Boolean master switches may declare `.extra('controls', [...])` — sibling
-+  // field names they disable while off. Compute the effective switch values
-+  // first, then the disabled targets, so nested rendering stays declarative.
++  // field.type === 'object' (the editable branch is exhaustive above): a
++  // collapsible semantic group, with label/collapsed driven by ui metadata.
++  return (
++    <GroupShell
++      name={name}
++      field={field}
++      path={path}
++      value={value}
++      fallback={fallback}
++      setNested={setNested}
++      disabled={disabled}
++      owner={owner}
++    />
++  )
++}
++
++/**
++ * Render one object node's child fields. Boolean master switches may declare
++ * `.extra('controls', [...])` — sibling field names they disable while off;
++ * compute the effective switch values first, then the disabled targets, so
++ * rendering stays declarative.
++ */
++function objectChildren(props: {
++  field: SchemaNode
++  path: readonly string[]
++  value: unknown
++  fallback: unknown
++  setNested: (path: readonly string[], value: unknown) => void
++  disabled: boolean
++  owner: GenericSchemaEditorProps
++}): ReactNode[] {
++  const { field, path, value, fallback, setNested, disabled, owner } = props
++  const { schema } = owner
 +  const disabledTargets = new Set<string>()
 +  for (const [childName, child] of Object.entries(field.dict ?? {})) {
 +    if (child.type !== 'boolean') continue
@@ -311,10 +386,36 @@ index 0000000..12cf413
 +      />,
 +    )
 +  }
++  return children
++}
++
++/**
++ * A semantic group: one top-level object field rendered as a collapsible
++ * section. Providers declare the group's display label and whether it starts
++ * collapsed through `.extra('extra', {ui: {label, collapsed}})` — generic,
++ * never per-family. Absent metadata keeps the current default (expanded,
++ * humanized key as label), so a provider with no UI hints renders exactly as
++ * before.
++ */
++function GroupShell(props: {
++  name: string
++  field: SchemaNode
++  path: readonly string[]
++  value: unknown
++  fallback: unknown
++  setNested: (path: readonly string[], value: unknown) => void
++  disabled: boolean
++  owner: GenericSchemaEditorProps
++}): ReactNode {
++  const ui = uiOf(props.field)
++  const label = ui?.label ?? humanize(props.name)
++  const collapsed = ui?.collapsed === true
 +  return (
-+    <details className={styles['customized']} open={field.meta.collapse !== false}>
-+      <summary className={styles['customizedSummary']}>{name}</summary>
-+      <div className={styles['customizedBody']}>{children}</div>
++    <details className={styles['customized']} open={!collapsed}>
++      <summary className={styles['customizedSummary']}>{label}</summary>
++      <div className={styles['customizedBody']}>
++        {objectChildren(props)}
++      </div>
 +    </details>
 +  )
 +}
@@ -605,10 +706,10 @@ index 4948e12..902d891 100644
    it('surfaces a rejected settings write and never stores the key after it', async () => {
 diff --git a/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
 new file mode 100644
-index 0000000..57a517e
+index 0000000..6d3c204
 --- /dev/null
 +++ b/packages/client/ui-settings-models/tests/generic-editor.client.spec.tsx
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,373 @@
 +// @vitest-environment jsdom
 +/**
 + * Schema-driven generic provider editor (issue #14): unknown configurable
@@ -635,8 +736,10 @@ index 0000000..57a517e
 +
 +/** The llama.cpp provider schema, as a third-party plugin would describe it. */
 +const LlamacppConfig = Schema.object({
-+  providerName: Schema.string().default('llama.cpp (Local Qwen3.8)'),
-+  baseURL: Schema.string(),
++  providerName: Schema.string().default('llama.cpp (Local Qwen3.8)')
++    .extra('extra', { ui: { label: 'Display name', description: 'Name shown in model selectors.' } }),
++  baseURL: Schema.string()
++    .extra('extra', { ui: { label: 'Base URL', description: 'OpenAI-compatible endpoint of the llama.cpp server.' } }),
 +  model: Schema.string(),
 +  apiKeyEnv: Schema.string().role('credential-ref'),
 +  retries: Schema.number().step(1).min(0).default(3),
@@ -645,7 +748,7 @@ index 0000000..57a517e
 +  reasoning: Schema.object({
 +    enabled: Schema.boolean().default(true).extra('extra', { controls: ['preset'] }),
 +    preset: Schema.union(['off', 'low', 'medium', 'xhigh']).default('medium'),
-+  }),
++  }).extra('extra', { ui: { label: 'Reasoning', collapsed: true } }),
 +  // Unsupported constructs this editor must surface, never silently drop.
 +  endpoints: Schema.array(Schema.string()),
 +  anything: Schema.any(),
@@ -919,5 +1022,64 @@ index 0000000..57a517e
 +      ns: 'llm-synthetic',
 +      ops: [{ op: 'set', path: ['mode'], value: 'slow' }],
 +    })
++  })
++})
++
++describe('semantic groups and field help (issue #19)', () => {
++  it('keeps basic fields visible and renders object fields as collapsed groups', async () => {
++    await mountSection()
++    openEditor('llamacpp-local')
++
++    // Top-level scalar fields are immediately visible (the Basic area).
++    expect(screen.getByLabelText('baseURL')).toBeInstanceOf(HTMLInputElement)
++    expect(screen.getByLabelText('providerName')).toBeInstanceOf(HTMLInputElement)
++    // The reasoning object is a group declared collapsed via ui metadata.
++    const summaries = [...document.querySelectorAll('summary')].map(s => s.textContent)
++    expect(summaries).toContain('Reasoning')
++    const group = [...document.querySelectorAll('details')]
++      .find(d => d.querySelector('summary')?.textContent === 'Reasoning')
++    expect(group).toBeDefined()
++    expect(group?.hasAttribute('open')).toBe(false)
++    // Group members still exist in the DOM (hidden) and keep their labels.
++    expect(screen.getByLabelText('reasoning.enabled')).toBeInstanceOf(HTMLSelectElement)
++    // Expanding the group makes its fields reachable like before.
++    fireEvent.click(screen.getByText('Reasoning'))
++    expect(group?.hasAttribute('open')).toBe(true)
++  })
++
++  it('renders ui.label and ui.description for fields', async () => {
++    await mountSection()
++    openEditor('llamacpp-local')
++
++    // The label override replaces the schema key as the visible name.
++    expect(screen.getByText('Display name')).toBeDefined()
++    expect(screen.getByText('Base URL')).toBeDefined()
++    // The concise description is rendered near the control.
++    expect(screen.getByText('Name shown in model selectors.')).toBeDefined()
++    expect(screen.getByText('OpenAI-compatible endpoint of the llama.cpp server.')).toBeDefined()
++    // The accessible name stays the dotted path (stable for tests/AT).
++    expect(screen.getByLabelText('providerName')).toBeInstanceOf(HTMLInputElement)
++  })
++
++  it('degrades to the current behavior when a provider supplies no ui metadata', async () => {
++    await mountSection({
++      ns: 'llm-plain-no-ui',
++      provider: 'plain-no-ui',
++      schema: Schema.object({
++        note: Schema.string(),
++        nested: Schema.object({ flag: Schema.boolean().default(true) }),
++      }),
++      value: {},
++    })
++    openEditor('plain-no-ui')
++
++    // No labels/descriptions: schema keys shown (humanized for groups).
++    expect(screen.getByLabelText('note')).toBeInstanceOf(HTMLInputElement)
++    const summaries = [...document.querySelectorAll('summary')].map(s => s.textContent)
++    expect(summaries).toContain('Nested') // humanized key, default expanded
++    const group = [...document.querySelectorAll('details')]
++      .find(d => d.querySelector('summary')?.textContent === 'Nested')
++    expect(group?.hasAttribute('open')).toBe(true)
++    expect(screen.getByLabelText('nested.flag')).toBeInstanceOf(HTMLSelectElement)
 +  })
 +})
