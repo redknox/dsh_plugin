@@ -209,7 +209,8 @@ describe('diagnostic model facts', () => {
     stubFetch((url) => (
       url.endsWith('/v1/models')
         ? jsonResponse({ data: [
-            { id: 'qwen3', meta: { n_ctx: 8192 } },
+            // discovered: contextWindow 8192, tools+reasoning supported
+            { id: 'qwen3', meta: { n_ctx: 8192 }, capabilities: ['completion', 'tools', 'reasoning'] },
             { id: 'other-model', meta: { n_ctx: 16_384 } },
           ] })
         : jsonResponse({})
@@ -224,8 +225,15 @@ describe('diagnostic model facts', () => {
 
     const models = adapter.diagnosticModels();
     const qwen3 = models.find((m) => m.id === 'qwen3');
-    // Configured facts win: discovered n_ctx 8192 does NOT override 4096.
-    expect(qwen3).toMatchObject({ id: 'qwen3', source: 'configured', contextWindow: 4096, supportsTools: false });
+    // Per-field precedence: configured contextWindow 4096 and tools false win;
+    // discovered supportsReasoning: true FILLS the unconfigured gap.
+    expect(qwen3).toMatchObject({
+      id: 'qwen3',
+      source: 'configured',
+      contextWindow: 4096,
+      supportsTools: false,
+      supportsReasoning: true,
+    });
     // A purely discovered model keeps discovered facts with its source.
     const other = models.find((m) => m.id === 'other-model');
     expect(other).toMatchObject({ id: 'other-model', source: 'discovered', contextWindow: 16_384 });

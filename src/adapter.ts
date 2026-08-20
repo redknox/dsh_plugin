@@ -285,17 +285,16 @@ export class LlamacppAdapter extends LlmAdapter {
       for (const profile of opts.endpointProfiles) {
         const result = this.discoveryFor(profile.baseURL).discoverCached();
         for (const entry of result?.models ?? []) {
+          // Per-field precedence (same as #10 routing/resolveModel):
+          // configured explicit values win, discovered values fill gaps —
+          // even when a configured row already exists for this model.
           const existing = facts.get(entry.id);
-          if (existing === undefined) {
-            facts.set(entry.id, { contextWindow: entry.contextWindow, tools: entry.supportsTools, reasoning: entry.supportsReasoning, configured: false });
-          } else if (!existing.configured) {
-            facts.set(entry.id, {
-              contextWindow: existing.contextWindow ?? entry.contextWindow,
-              tools: existing.tools ?? entry.supportsTools,
-              reasoning: existing.reasoning ?? entry.supportsReasoning,
-              configured: false,
-            });
-          }
+          facts.set(entry.id, {
+            contextWindow: existing?.contextWindow ?? entry.contextWindow,
+            tools: existing?.tools ?? entry.supportsTools,
+            reasoning: existing?.reasoning ?? entry.supportsReasoning,
+            configured: existing?.configured ?? false,
+          });
         }
       }
     }
