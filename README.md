@@ -7,16 +7,16 @@
 
 `llm-llamacpp` targets **[llama.cpp](https://github.com/ggml-org/llama.cpp)** as
 the provider/backend, through its OpenAI-compatible
-`/v1/chat/completions` endpoint — it is **not** a Qwen-only plugin. Any model
-family a llama.cpp build serves (Qwen, Llama, Gemma, DeepSeek, …) can be
-addressed; the runtime is llama.cpp-generic (streaming, tool calls,
-reliability, routing, discovery, observability, diagnostics), while
-model-family behavior — above all **Qwen's chat-template reasoning/thinking
-semantics** — is isolated behind explicit compatibility profiles
-(`modelFamily`, see [Reasoning](#reasoning)). **Qwen is the best-validated,
-first-class model family** (tested end-to-end against a real Qwen3.8 server);
-other families use the generic path and are expected to work but are not yet
-claimed as verified.
+`/v1/chat/completions` endpoint — it is **not** a Qwen-only plugin. The
+provider is *designed* to work with the model families a llama.cpp build
+serves; **Qwen is the currently validated family**, and other families follow
+the generic llama.cpp path but are not yet claimed as verified. The runtime
+is llama.cpp-generic (streaming, tool calls, reliability, routing,
+discovery, observability, diagnostics), while model-family behavior — above
+all **Qwen's chat-template reasoning/thinking semantics** — is isolated
+behind explicit compatibility profiles (`modelFamily`, see
+[Reasoning](#reasoning)). Qwen is the best-validated, first-class model
+family (tested end-to-end against a real Qwen3.8 server).
 
 The plugin owns the single provider route `llamacpp-local`. It is loaded by
 DeepSeek Harness as a Cordis plugin and registers itself through the public
@@ -34,9 +34,9 @@ DeepSeek Harness as a Cordis plugin and registers itself through the public
   `@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-settings`,
   and `@deepseek-ai/dsh-credentials` as peer dependencies.
 - A llama.cpp server with an OpenAI-compatible endpoint
-  (e.g. `llama-server -m path/to/qwen3.gguf --port 8080` for the Qwen family;
-  any family the build serves works), optionally started with
-  `--api-key <token>`.
+  (e.g. `llama-server -m path/to/qwen3.gguf --port 8080` — the Qwen family is
+  the validated one; other families are not yet claimed as verified),
+  optionally started with `--api-key <token>`.
 
 ## Installation
 
