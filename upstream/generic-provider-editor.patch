@@ -1,9 +1,9 @@
 diff --git a/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
 new file mode 100644
-index 0000000000..525d68be4e
+index 0000000000..6e79556ae7
 --- /dev/null
 +++ b/packages/client/ui-settings-models/src/client/GenericSchemaEditor.tsx
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,544 @@
 +/**
 + * Schema-driven editor for configurable providers the Models page has no
 + * curated family for (issue #14). Renders the provider's own
@@ -28,8 +28,9 @@ index 0000000000..525d68be4e
 +
 +import { useState } from 'react'
 +import type { ReactNode } from 'react'
-+import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
++import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 +import type { SchemaNode } from '@deepseek-ai/dsh-client-ui-settings/client'
++import type { ModelsOperations } from './operations.ts'
 +import type { SettingsSchemaOperations } from './schema-operations.ts'
 +import type { ProbeTarget } from './ModelListEditor.tsx'
 +import type { en } from './locales.ts'
@@ -53,8 +54,8 @@ index 0000000000..525d68be4e
 +  fallback: unknown
 +  /** Endpoint facts for the model fetch action, owned by the card. */
 +  probe: ProbeTarget
-+  /** Wire face the fetch action calls. */
-+  api: Pick<IApiClient, 'llm'>
++  /** The page's Host operations (0.1.5 contract); the fetch action calls discoverModels. */
++  operations: ModelsOperations
 +  /** Disable every control (read-only deployment or a pending write). */
 +  disabled: boolean
 +  /** Section copy. */
@@ -168,7 +169,7 @@ index 0000000000..525d68be4e
 +  owner: GenericSchemaEditorProps
 +}): ReactNode {
 +  const { name, field, path, value, fallback, setNested, disabled, owner } = props
-+  const { schema, probe, api, t } = owner
++  const { probe, operations, t } = owner
 +  const ui = uiOf(field)
 +  // The accessible name is the full dotted path so nested groups (e.g. a
 +  // `reasoning` object) never collide with their top-level namesakes.
@@ -233,7 +234,7 @@ index 0000000000..525d68be4e
 +          {help}
 +          <ModelPicker
 +            probe={probe}
-+            api={api}
++            operations={operations}
 +            t={t}
 +            disabled={disabled}
 +            onPick={(id) => { setNested(path, id) }}
@@ -439,12 +440,12 @@ index 0000000000..525d68be4e
 + */
 +function ModelPicker(props: {
 +  probe: ProbeTarget
-+  api: Pick<IApiClient, 'llm'>
++  operations: ModelsOperations
 +  t: (key: keyof typeof en) => string
 +  disabled: boolean
 +  onPick: (id: string) => void
 +}): ReactNode {
-+  const { probe, api, t, disabled, onPick } = props
++  const { probe, operations, t, disabled, onPick } = props
 +  const [busy, setBusy] = useState(false)
 +  const [failure, setFailure] = useState<string | undefined>(undefined)
 +  const [candidates, setCandidates] = useState<readonly { id: string }[] | undefined>(undefined)
@@ -452,22 +453,20 @@ index 0000000000..525d68be4e
 +    setBusy(true)
 +    setFailure(undefined)
 +    try {
-+      const response = await api.llm.discoverModels({
-+        settingsNs: probe.settingsNs,
++      const outcome = await operations.discoverModels(probe.settingsNs, {
 +        ...probe.provider === undefined ? {} : { provider: probe.provider },
 +        ...probe.baseURL === undefined || probe.baseURL.length === 0 ? {} : { baseURL: probe.baseURL },
 +        ...probe.apiKey === undefined ? {} : { apiKey: probe.apiKey },
 +      })
-+      if (!response.result.ok) {
-+        setFailure(response.result.error.message)
++      if (outcome.kind === 'refused') {
++        setFailure(outcome.message)
 +        return
 +      }
-+      const found = response.result.value.models
-+      if (found.length === 0) {
++      if (outcome.models.length === 0) {
 +        setFailure(t('fetchEmpty'))
 +        return
 +      }
-+      setCandidates(found)
++      setCandidates(outcome.models)
 +    } catch (error) {
 +      setFailure(messageOf(error))
 +    } finally {
@@ -550,7 +549,7 @@ index 0000000000..525d68be4e
 +  return <>{fields}</>
 +}
 diff --git a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
-index ffa8c2e1fe..3fddd835bd 100644
+index ffa8c2e1fe..2c0535a87e 100644
 --- a/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
 +++ b/packages/client/ui-settings-models/src/client/ProviderEditor.tsx
 @@ -32,6 +32,7 @@ import {
@@ -648,7 +647,7 @@ index ffa8c2e1fe..3fddd835bd 100644
 +                setDraft={setDraft}
 +                fallback={fallback}
 +                probe={probe}
-+                api={api}
++                operations={props.operations}
 +                disabled={disabled}
 +                t={t}
 +              />
