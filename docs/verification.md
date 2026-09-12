@@ -5,34 +5,55 @@ instance and the real llama.cpp server used during development
 (`10.60.84.212:8040`, model `/models/Qwen3.8-27B-Q8_0.gguf`, API key from the
 `LLAMA_API_TOKEN` environment variable).
 
-> **Web authentication (Harness >= 0.1.5).** The web API authenticates the
-> browser session: `dsh web` prints a URL carrying a launch token
-> (`http://127.0.0.1:3080/?token=…`). Opening that URL mints a signed session
-> cookie; bare `curl` calls to `/api/*` then answer `401 unauthorized`. For
-> scripted checks, either reuse the browser cookie (copy it from devtools), or
-> run `examples/settings-poc.mjs` with `DSH_WEB_TOKEN=<launch-token>`, which
-> performs the token exchange itself. The in-process examples
-> (`diagnostics.mjs`, `tool-call.mjs`) mount the plugin directly and need no
-> web auth.
+> **Web authentication + endpoint protocol (Harness >= 0.1.5).** The web API
+> authenticates the browser session: `dsh web` prints a URL carrying a launch
+> token (`http://127.0.0.1:3080/?token=…`). Opening that URL mints a signed
+> session cookie; bare `curl` calls to `/api/*` then answer `401 unauthorized`.
+> Endpoints are **slash-named** (`settings/describe`, `llm/listProviders`), the
+> call travels in an `args` slot, and the method equals the endpoint:
+>
+> ```bash
+> TOKEN=<launch-token from the dsh web URL>
+> COOKIE=$(curl -s -i "http://127.0.0.1:3080/?token=$TOKEN" \
+>   | grep -i '^set-cookie' | sed 's/^[Ss]et-[Cc]ookie: //' | cut -d';' -f1)
+> curl -s -X POST http://127.0.0.1:3080/api/llm/listConfigurableProviders \
+>   -H 'Content-Type: application/json' -H "Cookie: $COOKIE" \
+>   -d '{"type":"client-request","rpcId":"x","method":"llm/listConfigurableProviders","payload":{"args":{}}}'
+> ```
+>
+> `examples/settings-poc.mjs` performs the token exchange itself — run it with
+> `DSH_WEB_TOKEN=<launch-token>`. The in-process examples (`diagnostics.mjs`,
+> `tool-call.mjs`) mount the plugin directly and need no web auth.
 
 ## 1. Provider and model registration (API)
 
 ```bash
-# 1) The provider route is registered and active
-curl -s -X POST http://127.0.0.1:3080/api/llm.providers -H 'Content-Type: application/json' \
-  -H 'Cookie: <session cookie from the browser>' \
-  -d '{"type":"client-request","rpcId":"x","method":"llm.providers","payload":{}}'
-# expect: llamacpp-local  active: true, displayName "llama.cpp (Local Qwen3.8)"
+# 0) session cookie (see the authentication note above)
+COOKIE=$(curl -s -i "http://127.0.0.1:3080/?token=$TOKEN" \
+  | grep -i '^set-cookie' | sed 's/^[Ss]et-[Cc]ookie: //' | cut -d';' -f1)
 
-# 2) Model catalog (with discovery enabled, this reflects the server's real model)
-curl -s -X POST http://127.0.0.1:3080/api/llm.models -H 'Content-Type: application/json' \
-  -d '{"type":"client-request","rpcId":"x","method":"llm.models","payload":{}}'
-# expect: llamacpp-local group with /models/Qwen3.8-27B-Q8_0.gguf and reasoning
-#         efforts off/low/medium/xhigh (default medium)
+# 1) The provider route and the configurable-provider directory entry
+curl -s -X POST http://127.0.0.1:3080/api/llm/listProviders \
+  -H 'Content-Type: application/json' -H "Cookie: $COOKIE" \
+  -d '{"type":"client-request","rpcId":"x","method":"llm/listProviders","payload":{"args":{}}}'
+# expect: llamacpp-local with name "llama.cpp (Local Qwen3.8)"
+
+curl -s -X POST http://127.0.0.1:3080/api/llm/listConfigurableProviders \
+  -H 'Content-Type: application/json' -H "Cookie: $COOKIE" \
+  -d '{"type":"client-request","rpcId":"x","method":"llm/listConfigurableProviders","payload":{"args":{}}}'
+# expect: {provider: "llamacpp-local", displayName: "llama.cpp (Local Qwen3.8)",
+#          settingsNs: "llm-llamacpp", settingsPath: []}
+
+# 2) Model discovery against the configured endpoint (draft interrogation)
+curl -s -X POST http://127.0.0.1:3080/api/llm/discoverModels \
+  -H 'Content-Type: application/json' -H "Cookie: $COOKIE" \
+  -d '{"type":"client-request","rpcId":"x","method":"llm/discoverModels","payload":{"args":{"settingsNs":"llm-llamacpp","request":{"provider":"llamacpp-local"}}}}'
+# expect: [{id: "/models/Qwen3.8-27B-Q8_0.gguf", contextWindow: …}, …]
 
 # 3) The API key resolves in the running process (credentials seam, env layer)
-curl -s -X POST http://127.0.0.1:3080/api/credentials.describe -H 'Content-Type: application/json' \
-  -d '{"type":"client-request","rpcId":"x","method":"credentials.describe","payload":{"refs":["LLAMA_API_TOKEN"]}}'
+curl -s -X POST http://127.0.0.1:3080/api/credentials/describe \
+  -H 'Content-Type: application/json' -H "Cookie: $COOKIE" \
+  -d '{"type":"client-request","rpcId":"x","method":"credentials/describe","payload":{"args":{"refs":["LLAMA_API_TOKEN"]}}}'
 # expect: {"LLAMA_API_TOKEN": {"configured": true, "source": "env"}}
 ```
 
@@ -115,11 +136,11 @@ with `registerModelDiscovery` is loaded):
 
 | Check | Observed |
 |---|---|
-| `settings.describe` | `llm-llamacpp` registered, `applies: live`, `writable: true`, `secrets: []`, `reasoning.preset: medium` |
-| `settings.update` (`reasoning.preset: low`) | revision 0→1, persisted in `~/.dsh/settings.yaml`, re-describes as `low` with no restart |
-| `credentials.set` | POC ref → `source: file`; `LLAMA_API_TOKEN` → `source: env`; the secret never appears in `settings.yaml`; unset cleans up |
-| `llm.discoverModels` draft path | `{settingsNs: llm-llamacpp, baseURL, apiKey}` → `/models/Qwen3.8-27B-Q8_0.gguf` (`contextWindow: 204800` from `meta.n_ctx`) |
-| `llm.discoverModels` provider path | `{settingsNs, provider: llamacpp-local}` → same model, answered from adapter knowledge, no network call |
+| `settings/describe` | `llm-llamacpp` registered, `applies: live`, `writable: true`, `secrets: []`, `reasoning.preset: medium` |
+| `settings/update` (`reasoning.preset: low`) | revision 0→1, persisted in `~/.dsh/settings.yaml`, re-describes as `low` with no restart |
+| `credentials/set` | POC ref → `source: file`; `LLAMA_API_TOKEN` → `source: env`; the secret never appears in `settings.yaml`; unset cleans up |
+| `llm/discoverModels` draft path | `{settingsNs: llm-llamacpp, baseURL, apiKey}` → `/models/Qwen3.8-27B-Q8_0.gguf` (`contextWindow: 204800` from `meta.n_ctx`) |
+| `llm/discoverModels` provider path | `{settingsNs, provider: llamacpp-local}` → same model, answered from adapter knowledge, no network call |
 | restore | `reasoning.preset` back to `medium`, user layer empty, no leftover sections |
 
 ## 7. Settings-surface UI PoC (#13, upstream patch prototype)
@@ -140,19 +161,20 @@ boot), then walk through:
    settings*: **Display name** (`providerName`), **Base URL**, **Model**,
    **Reasoning** (Enabled/Disabled → `reasoning.enabled`), **Reasoning
    preset** (off/low/medium/xhigh → `reasoning.preset`), and **Fetch
-   available models** (→ host `llm.discoverModels`; pick
+   available models** (→ host `llm/discoverModels`; pick
    `/models/Qwen3.8-27B-Q8_0.gguf` to fill the Model field).
 3. Change, say, the reasoning preset to `low` and **Apply**. The saved notice
    appears and the change is live without a restart — verify with:
 
 ```bash
-curl -s -X POST http://127.0.0.1:3080/api/settings.describe -H 'Content-Type: application/json' \
-  -d '{"type":"client-request","rpcId":"x","method":"settings.describe","payload":{}}'
+curl -s -X POST http://127.0.0.1:3080/api/settings/describe \
+  -H 'Content-Type: application/json' -H "Cookie: $COOKIE" \
+  -d '{"type":"client-request","rpcId":"x","method":"settings/describe","payload":{"args":{}}}'
 # llm-llamacpp value.reasoning.preset: "low", user layer contains the override,
 # secrets: [] (the API key never lands in settings)
 ```
 
-4. Revert the preset in the UI (or `settings.mutate` unset) and confirm the
+4. Revert the preset in the UI (or `settings/mutate` unset) and confirm the
    user layer returns empty.
 
 ### UI walkthrough — verified live (2026-02-14, host restarted with the patch)
@@ -167,7 +189,7 @@ Changed Reasoning preset to `low` and hit Apply — green saved notice
 appeared. Host-side evidence:
 
 ```
-settings.describe:  revision 0 -> 2
+settings/describe:  revision 0 -> 2
 user layer:         {"reasoning":{"enabled":false,"preset":"low"}}   (written by the UI)
 value.reasoning:    {enabled:false, preset:"low", ...}               (live, no restart)
 secrets:            []                                               (key never in settings)
@@ -175,7 +197,7 @@ settings.yaml:      llm-llamacpp: { reasoning: { enabled: false, preset: low } }
 credentials:        LLAMA_API_TOKEN source=env (untouched)
 ```
 
-Restored afterwards with `settings.mutate` unset of `reasoning` (user layer
+Restored afterwards with `settings/mutate` unset of `reasoning` (user layer
 empty again, `llm-llamacpp` section removed from settings.yaml).
 
 A follow-up round confirmed the save → reopen round-trip in the UI: changed
@@ -191,7 +213,7 @@ layer empty.
 The #13 prototype is superseded by a **source-level generic editor** in the
 DeepSeek Harness tree (branch `feat/generic-provider-editor`, diff in
 `upstream/generic-provider-editor.patch`; see `upstream/README.md`). Unknown
-configurable-provider namespaces render their own `settings.describe` schema
+configurable-provider namespaces render their own `settings/describe` schema
 instead of the settings.yaml hint, with submit enabled.
 
 The running instance's bundle was replaced with the built artifact for live
@@ -206,14 +228,14 @@ covers it). After a restart, walk through:
    `telemetry`, `retryPolicy`. Unsupported shapes (`endpoints`,
    heterogeneous unions) show the explicit settings.yaml hint.
 2. Change e.g. `reasoning.preset` to `low` and Apply — green saved notice;
-   `settings.describe` shows the user-layer override and `secrets: []`
+   `settings/describe` shows the user-layer override and `secrets: []`
    (key stays out of settings.yaml). Setting `reasoning.enabled` to
    `Disabled` locks the `preset` select — the linkage is declared by the
    plugin through Schemastery metadata (`meta.extra.controls`) and applied
    generically by the editor, not hard-coded per family.
 3. Click **Fetch from provider** next to the model field — the discovered
    `/models/Qwen3.8-27B-Q8_0.gguf` appears; picking it fills the model field.
-4. Revert overrides afterwards via the UI or `settings.mutate` unset.
+4. Revert overrides afterwards via the UI or `settings/mutate` unset.
 
 ### Generic editor — verified live (2026-02-14, restarted with the controls build)
 
@@ -262,7 +284,7 @@ plugin's schema serialization (9 collapsed markers).
 | #10 discovery | model catalog reflects the server; resolveModelInfo context |
 | #11 feedback | `reasoning.feedback.enabled` + feedback rationale in reasoning events |
 | #12 diagnostics | `examples/diagnostics.mjs` + `llm-llamacpp/diagnostics` ctx service |
-| #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm.discoverModels` for the `llm-llamacpp` namespace; Models-page UI PoC via `upstream-poc/` patch |
+| #13 settings exploration | `examples/settings-poc.mjs` + `docs/exploration/settings-ui.md`; discovery now serves `llm/discoverModels` for the `llm-llamacpp` namespace; Models-page UI PoC via `upstream-poc/` patch |
 | #14 generic provider editor | upstream branch `feat/generic-provider-editor` (`upstream/generic-provider-editor.patch`); the Models page edits `llm-llamacpp` through the schema-driven generic editor (no hard-coded family) |
 | #15 Git installable bundle | `dsh plugin --profile <fresh> add github:redknox/dsh_plugin#<sha>` installs and boots on a fresh profile (`docs/install.md`; verified SHA `313c210`, dsh 0.1.0-rc.7) |
 | #17 prebuilt artifact / npm prep | **published `llm-llamacpp@0.1.0`** (registry E2E: install, bundle reconcile, boot, provider active, remove/reinstall — `docs/release.md`) |

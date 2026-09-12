@@ -86,36 +86,44 @@ async function authenticate() {
 
 let updated = false;
 
-/** POST one client-request RPC and return the business value. */
-async function rpc(method, payload = {}) {
+/**
+ * POST one endpoint RPC and return the business value.
+ *
+ * Harness >= 0.1.5 names endpoints with slashes and carries the call in an
+ * `args` slot: `POST /api/settings/describe` with
+ * `{type:'client-request', rpcId, method:'settings/describe', payload:{args}}`.
+ * @param endpoint - slash-named endpoint, e.g. `settings/describe`.
+ * @param args - endpoint arguments (positional parameters by name).
+ */
+async function rpc(endpoint, args = {}) {
   const rpcId = randomUUID();
   let response;
   try {
-    response = await fetch(`${HOST}/api/${method}`, {
+    response = await fetch(`${HOST}/api/${endpoint}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...(sessionCookie.length > 0 ? { cookie: sessionCookie } : {}),
       },
-      body: JSON.stringify({ type: 'client-request', rpcId, method, payload }),
+      body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
     });
   } catch (error) {
     throw new Error(`cannot reach ${HOST} (${error?.message ?? error}); is the DSH web server running?`);
   }
   if (response.status === 401) {
     throw new Error(
-      `${method}: 401 unauthorized — this DSH instance requires web authentication; `
+      `${endpoint}: 401 unauthorized — this DSH instance requires web authentication; `
       + 'set DSH_WEB_TOKEN to the token from the URL printed by `dsh web`',
     );
   }
   const envelope = await response.json();
   if (envelope?.type !== 'server-response' || envelope.rpcId !== rpcId) {
-    throw new Error(`unexpected envelope from ${method}: ${JSON.stringify(envelope).slice(0, 300)}`);
+    throw new Error(`unexpected envelope from ${endpoint}: ${JSON.stringify(envelope).slice(0, 300)}`);
   }
   const result = envelope.result;
   if (!result?.ok) {
     const error = result?.error ?? {};
-    throw new Error(`${method} failed: [${error.code}] ${error.message}`);
+    throw new Error(`${endpoint} failed: [${error.code}] ${error.message}`);
   }
   return result.value;
 }
@@ -140,7 +148,7 @@ try {
   console.log(`settings-surface POC against ${HOST} (ns=${NS}, probe=${PROBE_BASE_URL})\n`);
 
   // --- 1. describe ---------------------------------------------------------
-  const describe = await rpc('settings.describe');
+  const describe = await rpc('settings/describe');
   const before = section(describe.namespaces);
   console.log('1. settings.describe:');
   console.log(`   ns=${before.ns} applies=${before.applies} writable=${describe.writable} revision=${before.revision}`);
@@ -150,7 +158,7 @@ try {
   console.log('');
 
   // --- 2. live update ------------------------------------------------------
-  const patched = await rpc('settings.update', { ns: NS, patch: { reasoning: { preset: 'low' } } });
+  const patched = await rpc('settings/update', { ns: NS, patch: { reasoning: { preset: 'low' } } });
   updated = true;
   console.log('2. settings.update { reasoning: { preset: "low" } }:');
   console.log(`   new revision=${patched.revision} reasoning.preset=${patched.value?.reasoning?.preset}`);
@@ -161,23 +169,24 @@ try {
   } else {
     console.log(`   (settings document not found at ${SETTINGS_FILE}; skipped file check)`);
   }
-  const reRead = section((await rpc('settings.describe')).namespaces);
+  const reRead = section((await rpc('settings/describe')).namespaces);
   console.log(`   re-described reasoning.preset = ${reRead.value?.reasoning?.preset} (no restart)`);
   console.log('');
 
   // --- 3. credentials seam -------------------------------------------------
-  await rpc('credentials.set', { ref: POC_REF, value: POC_SECRET });
-  const credView = await rpc('credentials.describe', { refs: [POC_REF, 'LLAMA_API_TOKEN'] });
+  await rpc('credentials/set', { ref: POC_REF, value: POC_SECRET });
+  const credView = await rpc('credentials/describe', { refs: [POC_REF, 'LLAMA_API_TOKEN'] });
   console.log('3. credentials.set/describe:');
-  console.log(`   ${POC_REF} -> ${JSON.stringify(credView.credentials[POC_REF])}`);
-  console.log(`   LLAMA_API_TOKEN -> ${JSON.stringify(credView.credentials.LLAMA_API_TOKEN)}`);
+  const creds = credView.credentials ?? credView;
+  console.log(`   ${POC_REF} -> ${JSON.stringify(creds[POC_REF])}`);
+  console.log(`   LLAMA_API_TOKEN -> ${JSON.stringify(creds.LLAMA_API_TOKEN)}`);
   if (existsSync(SETTINGS_FILE)) {
     const yaml = readFileSync(SETTINGS_FILE, 'utf8');
     console.log(`   secret in settings.yaml? ${secretLeaks(yaml) ? 'YES (BAD)' : 'no (good)'}`);
   } else {
     console.log('   (settings document not found; skipped leak check)');
   }
-  await rpc('credentials.unset', { ref: POC_REF });
+  await rpc('credentials/unset', { ref: POC_REF });
   console.log('   (POC credential unset again)');
   console.log('');
 
@@ -186,13 +195,13 @@ try {
   let discoveryVerified = true;
   if (API_KEY.length > 0) {
     try {
-      const draft = await rpc('llm.discoverModels', {
+      const draft = await rpc('llm/discoverModels', {
         settingsNs: NS,
-        baseURL: PROBE_BASE_URL,
-        apiKey: API_KEY,
+        request: { baseURL: PROBE_BASE_URL, apiKey: API_KEY },
       });
       console.log(`   draft endpoint ${PROBE_BASE_URL} ->`);
-      for (const model of draft.models) {
+      const draftModels = Array.isArray(draft) ? draft : draft.models ?? [];
+    for (const model of draftModels) {
         console.log(`     - ${model.id}${model.contextWindow !== undefined ? ` (contextWindow=${model.contextWindow})` : ''}`);
       }
     } catch (error) {
@@ -203,8 +212,8 @@ try {
     console.log(`   (LLAMA_API_TOKEN unset; skipped live draft probe of ${PROBE_BASE_URL})`);
   }
   try {
-    const known = await rpc('llm.discoverModels', { settingsNs: NS, provider: 'llamacpp-local' });
-    console.log(`   registered route (provider only) -> ${known.models.map((m) => m.id).join(', ') || '(empty)'}`);
+    const known = await rpc('llm/discoverModels', { settingsNs: NS, request: { provider: 'llamacpp-local' } });
+    console.log(`   registered route (provider only) -> ${(Array.isArray(known) ? known : known.models ?? []).map((m) => m.id).join(', ') || '(empty)'}`);
   } catch (error) {
     discoveryVerified = false;
     console.log(`   registered-route answer unavailable: ${error?.message ?? error}`);
@@ -216,10 +225,10 @@ try {
   console.log('');
 
   // --- 5. restore ----------------------------------------------------------
-  await rpc('settings.update', { ns: NS, patch: { reasoning: { preset: 'medium' } } });
-  await rpc('settings.mutate', { ns: NS, ops: [{ op: 'unset', path: ['reasoning'] }] });
+  await rpc('settings/update', { ns: NS, patch: { reasoning: { preset: 'medium' } } });
+  await rpc('settings/mutate', { ns: NS, ops: [{ op: 'unset', path: ['reasoning'] }] });
   updated = false;
-  const after = section((await rpc('settings.describe')).namespaces);
+  const after = section((await rpc('settings/describe')).namespaces);
   console.log('5. restored:');
   console.log(`   reasoning.preset = ${after.value?.reasoning?.preset} revision=${after.revision}`);
   console.log(`   user layer keys  = ${JSON.stringify(Object.keys(after.user ?? {}))}`);
@@ -231,14 +240,14 @@ try {
   // Best effort: never leave the running instance mutated.
   if (updated) {
     try {
-      await rpc('settings.mutate', { ns: NS, ops: [{ op: 'unset', path: ['reasoning'] }] });
+      await rpc('settings/mutate', { ns: NS, ops: [{ op: 'unset', path: ['reasoning'] }] });
       console.log('(cleanup: reasoning override removed)');
     } catch {
       // restore failed; the operator can reset reasoning.preset manually
     }
   }
   try {
-    await rpc('credentials.unset', { ref: POC_REF });
+    await rpc('credentials/unset', { ref: POC_REF });
   } catch {
     // nothing to unset
   }
