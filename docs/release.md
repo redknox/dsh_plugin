@@ -68,6 +68,33 @@ Publishing note: npm requires **2FA or a granular access token with "Bypass
 OTP) for future releases. `0.1.0` is immutable — later fixes must bump the
 version (`0.1.1`, …).
 
+## Published — llm-llamacpp@0.2.0 (2026-09-12)
+
+Harness 0.1.5 adaptation release (breaking: requires Harness >= 0.1.5-rc.2).
+
+- Core API rebase: `installSettingsSection` -> `settings.installSection`,
+  `settingsNamespace` -> plain string namespace, `deepEqualJson` ->
+  `@deepseek-ai/dsh-util-values`, `CallId` -> `ToolCallId`, discovery callback
+  `(request, signal)`; deps at `^0.1.5-rc.2` / cordis `^4.0.2`.
+- Web protocol: slash-named endpoints (`settings/describe`,
+  `llm/listProviders`, …) with the call in an `args` slot and the
+  launch-token -> session-cookie authentication; examples/docs updated.
+- Registry E2E on a fresh profile (`e2e-020`, dsh 0.1.5-rc.2, pnpm 11.25.0):
+  `dsh plugin --profile e2e-020 add llm-llamacpp@0.2.0` installs from the
+  registry (no allowBuilds), reconciles `['@deepseek-ai/dsh-base',
+  'llm-llamacpp']`, `--dump-config` shows the package-name entry, the
+  installed module resolves its Harness peers, and remove/reinstall
+  reconciles the bundle list.
+- Verified in-process against the real llama.cpp server on 0.1.5-rc.2
+  (`diagnostics.mjs`) and through the authenticated RPC surface
+  (`llm/listProviders`, `llm/listConfigurableProviders`,
+  `llm/discoverModels`, `settings/describe`).
+
+> The Models-page generic editor remains an **upstream-PR candidate**
+> (`upstream/generic-provider-editor.patch`): after a Harness upgrade,
+> re-deploy it with `node scripts/deploy-ui-patch.mjs` and restart the web
+> instance (see README).
+
 ## Release checklist (npm publication)
 
 npm publication is a **separate external release action** and must be

@@ -31,7 +31,7 @@ DeepSeek Harness as a Cordis plugin and registers itself through the public
 > multi-endpoint fallback on real network failures, model/capability
 > discovery, diagnostics, model-family compatibility profiles, the DSH
 > schema-driven generic settings editor, and the full install path —
-> **published on npm as `llm-llamacpp@0.1.0`**.
+> **published on npm as `llm-llamacpp@0.2.0`** (Harness 0.1.5-ready).
 
 ## Requirements
 
