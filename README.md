@@ -150,6 +150,22 @@ Reliability, Endpoints, Discovery, Diagnostics, Telemetry) are collapsible.
 The mechanism is provider-generic; any configurable provider can declare the
 same hints and no provider family is hard-coded in the editor.
 
+> **Deploying the editor (Harness source installs).** The generic editor is an
+> upstream-PR candidate (`upstream/generic-provider-editor.patch`), **not part
+> of this npm package** — until it lands upstream, an unknown provider family
+> renders a read-only credential field ("other fields live in settings.yaml").
+> Harness upgrades and re-installs replace the client bundle, so re-apply the
+> patch after upgrading Harness and restart the web instance:
+>
+> ```bash
+> node scripts/deploy-ui-patch.mjs [path/to/deepseek-harness]   # apply + build
+> # then restart `dsh web` so the bundle revision is re-hashed
+> ```
+>
+> The script locates the checkout automatically (argument → `DSH_HARNESS` →
+> the profile's shared `@deepseek-ai/cordis` link) and verifies the built
+> bundle. Everything else in this README works without the patch.
+
 ## Capability-aware endpoint routing (issue #9)
 
 Evolve ordered fallback into capability-aware routing: an eligible endpoint
