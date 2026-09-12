@@ -6,7 +6,7 @@
  * and no prompt content, tool arguments, or secrets ever appear in events.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { CallId, LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
+import { ToolCallId, LlmError, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm';
 import { LlamacppAdapter, type LlamaCppChatHandle } from '../src/adapter.ts';
 import { resolveAdapterOptions } from '../src/config.ts';
 import {
@@ -266,7 +266,7 @@ describe('telemetry on tool-call paths', () => {
     const { adapter } = harness({ baseURL: 'http://127.0.0.1:8080' }, { '*': toolCalls }, sink);
     const chunks: StreamChunk[] = [];
     for await (const c of adapter.stream(baseOptions)) chunks.push(c);
-    void CallId;
+    void ToolCallId;
     const f = finished(events);
     if (f?.type !== 'finished') return;
     expect(f.outcome.toolCallCount).toBe(2);

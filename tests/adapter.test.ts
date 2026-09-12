@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  CallId,
+  ToolCallId,
   LlmError,
   type GenerateOptions,
   type Message,
@@ -141,15 +141,15 @@ describe('LlamacppAdapter request serialization', () => {
     const toolResultMessage: Message = {
       id: 'msg-tool' as Message['id'],
       role: 'user',
-      content: [{ type: 'tool-result', toolCallId: CallId('call_1'), content: [{ type: 'text', text: '42' }] }],
-      source: { kind: 'tool', callId: CallId('call_1') },
+      content: [{ type: 'tool-result', toolCallId: ToolCallId('call_1'), content: [{ type: 'text', text: '42' }] }],
+      source: { kind: 'tool', callId: ToolCallId('call_1') },
     };
     const assistantWithTools: Message = {
       id: 'msg-asst-tools' as Message['id'],
       role: 'assistant',
       content: [
         { type: 'text', text: 'Let me check.' },
-        { type: 'tool-call', id: CallId('call_1'), name: 'get_time', arguments: '{}' },
+        { type: 'tool-call', id: ToolCallId('call_1'), name: 'get_time', arguments: '{}' },
       ],
       source: { kind: 'model', provider: 'llamacpp-local', model: 'qwen3' },
     };

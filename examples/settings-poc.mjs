@@ -29,7 +29,9 @@
  *   LLAMA_API_TOKEN=<token> node examples/settings-poc.mjs
  *
  * Env: DSH_URL (default http://127.0.0.1:3080), LLAMACPP_BASE_URL,
- *      LLAMA_API_TOKEN, DSH_SETTINGS_FILE (default ~/.dsh/settings.yaml).
+ *      LLAMA_API_TOKEN, DSH_SETTINGS_FILE (default ~/.dsh/settings.yaml),
+ *      DSH_WEB_TOKEN (the token from the URL `dsh web` prints; required on
+ *      DSH >= 0.1.5, whose web API authenticates the browser session).
  *
  * Requires a running DSH instance whose composition mounts this plugin and a
  * settings provider (dsh-settings-file); a llama.cpp server for step 4.
@@ -46,6 +48,41 @@ const API_KEY = process.env.LLAMA_API_TOKEN ?? '';
 const SETTINGS_FILE = process.env.DSH_SETTINGS_FILE ?? join(homedir(), '.dsh', 'settings.yaml');
 const POC_REF = 'LLAMACPP_POC_TOKEN';
 const POC_SECRET = `poc-secret-${randomUUID().slice(0, 8)}`;
+/**
+ * DSH >= 0.1.5 authenticates the web API: the URL printed by `dsh web` carries
+ * a launch token, which exchanges for a signed session cookie. Copy that token
+ * here (the `token` query parameter) to run against an authenticated instance.
+ */
+const WEB_TOKEN = process.env.DSH_WEB_TOKEN ?? '';
+
+/** Session cookie obtained from the launch-token exchange, when one is needed. */
+let sessionCookie = '';
+
+/**
+ * Exchange the launch token for the web session cookie, mirroring what the
+ * browser does on the URL `dsh web` prints. No-op when no token is provided
+ * (older instances without web auth).
+ */
+async function authenticate() {
+  if (WEB_TOKEN.length === 0) return;
+  let response;
+  try {
+    response = await fetch(`${HOST}/?token=${encodeURIComponent(WEB_TOKEN)}`, {
+      redirect: 'manual',
+      headers: { accept: 'text/html' },
+    });
+  } catch (error) {
+    throw new Error(`cannot reach ${HOST} for authentication (${error?.message ?? error})`);
+  }
+  const setCookie = response.headers.get('set-cookie');
+  if (setCookie === null || setCookie.length === 0) {
+    throw new Error(
+      `authentication failed: no session cookie from ${HOST} (status ${response.status}); `
+      + 'is DSH_WEB_TOKEN the token from the URL printed by `dsh web`?',
+    );
+  }
+  sessionCookie = setCookie.split(';', 1)[0];
+}
 
 let updated = false;
 
@@ -56,11 +93,20 @@ async function rpc(method, payload = {}) {
   try {
     response = await fetch(`${HOST}/api/${method}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(sessionCookie.length > 0 ? { cookie: sessionCookie } : {}),
+      },
       body: JSON.stringify({ type: 'client-request', rpcId, method, payload }),
     });
   } catch (error) {
     throw new Error(`cannot reach ${HOST} (${error?.message ?? error}); is the DSH web server running?`);
+  }
+  if (response.status === 401) {
+    throw new Error(
+      `${method}: 401 unauthorized — this DSH instance requires web authentication; `
+      + 'set DSH_WEB_TOKEN to the token from the URL printed by `dsh web`',
+    );
   }
   const envelope = await response.json();
   if (envelope?.type !== 'server-response' || envelope.rpcId !== rpcId) {
@@ -90,6 +136,7 @@ function secretLeaks(value) {
 }
 
 try {
+  await authenticate();
   console.log(`settings-surface POC against ${HOST} (ns=${NS}, probe=${PROBE_BASE_URL})\n`);
 
   // --- 1. describe ---------------------------------------------------------

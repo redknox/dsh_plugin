@@ -17,7 +17,8 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import { LlmError, assertUsableApiKey } from '@deepseek-ai/dsh-llm';
-import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';
+import type {} from '@deepseek-ai/dsh-settings';
+import { deepEqualJson } from '@deepseek-ai/dsh-util-values';
 import { DiagnosticsStore } from './diagnostics.ts';
 import { LlamacppAdapter } from './adapter.ts';
 import {
@@ -39,7 +40,7 @@ export const name = PLUGIN_NAME;
 /** Require the `llm` service before `apply` runs. */
 export const inject = ['llm'] as const;
 /** Settings namespace owning this plugin's configurable-provider profile. */
-export const NS = settingsNamespace(PLUGIN_NAME);
+export const NS = PLUGIN_NAME;
 
 /**
  * Apply the plugin on one context.
@@ -136,7 +137,7 @@ export function apply(ctx: Context, config: ConfigType): void {
   // namespace as the configurable-provider directory entry, which is what a
   // settings surface already holds. Disposed with the fiber like the other
   // registrations.
-  ctx.llm.registerModelDiscovery(NS, (request) => adapter.discoverDraft(request));
+  ctx.llm.registerModelDiscovery(NS, (request, signal) => adapter.discoverDraft(request, signal));
 
   // Registration is disposed with this fiber (Cordis effect semantics), so
   // plugin unload unregisters the route and the directory entry automatically.
@@ -153,13 +154,15 @@ export function apply(ctx: Context, config: ConfigType): void {
     registeredPolicy = policy;
   };
 
-  installSettingsSection(ctx, NS, Config, config, {
-    setSource: (source) => {
-      // The settings scope hands back the schema-normalized shape, whose
-      // optional fields the schemastery mapped type types as `| null`; our
-      // manual ConfigType mirror omits the null branch, so assert it.
-      current = source as unknown as () => ConfigType;
-    },
-    onChange: ensureRegistrationFacts,
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(ctx, NS, Config, config, {
+      setSource: (source) => {
+        // The settings scope hands back the schema-normalized shape, whose
+        // optional fields the schemastery mapped type types as `| null`; our
+        // manual ConfigType mirror omits the null branch, so assert it.
+        current = source as unknown as () => ConfigType;
+      },
+      onChange: ensureRegistrationFacts,
+    });
   });
 }

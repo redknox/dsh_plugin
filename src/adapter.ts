@@ -281,10 +281,14 @@ export class LlamacppAdapter extends LlmAdapter {
    *   answer).
    * - otherwise: `[]`.
    *
-   * Probe failures degrade to `[]` and never throw, except that caller
-   * cancellation propagates so the interrogation settles promptly.
+   * Probe failures degrade to `[]` and never throw, except that the caller's
+   * `signal` — the second parameter, supplied by `ctx.llm.discoverModels` —
+   * propagates cancellation so the interrogation settles promptly.
    */
-  async discoverDraft(request: LlmModelDiscoveryRequest): Promise<readonly LlmDiscoveredModel[]> {
+  async discoverDraft(
+    request: LlmModelDiscoveryRequest,
+    signal?: AbortSignal,
+  ): Promise<readonly LlmDiscoveredModel[]> {
     const opts = this.deps.options();
     if (request.baseURL !== undefined && request.baseURL.length > 0) {
       // One-shot credential from the draft wins; else the configured key.
@@ -299,7 +303,7 @@ export class LlamacppAdapter extends LlmAdapter {
       }
       const discovery = this.discoveryFor(request.baseURL, auth);
       try {
-        const result = await discovery.discover(request.signal);
+        const result = await discovery.discover(signal);
         return result.models.map((model) => ({
           id: model.id,
           ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
@@ -307,7 +311,7 @@ export class LlamacppAdapter extends LlmAdapter {
       } catch (error) {
         // Cancellation must propagate (the host waits on the RPC); probe
         // failures degrade to an empty list — never a broken interrogation.
-        if (request.signal?.aborted) throw error;
+        if (signal?.aborted) throw error;
         return [];
       }
     }

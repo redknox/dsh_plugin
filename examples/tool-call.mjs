@@ -18,7 +18,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import LlmRuntime, {
   BlockAssembler,
-  CallId,
+  ToolCallId,
   createAssistantMessage,
   createToolResultMessage,
   createUserMessage,
@@ -121,7 +121,7 @@ try {
     const result = runTool(call.name, args);
     console.log(`\ntool ${call.name}(${JSON.stringify(args)}) -> ${result}`);
     history.push(createToolResultMessage({
-      callId: CallId(call.id),
+      callId: ToolCallId(call.id),
       content: [{ type: 'text', text: result }],
       isError: false,
     }));

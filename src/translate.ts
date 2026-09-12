@@ -8,7 +8,7 @@
  * @module llm-llamacpp/translate
  */
 import {
-  CallId,
+  ToolCallId,
   EMPTY_RESPONSE_CODE,
   LlmError,
   type FinishReason,
@@ -143,7 +143,7 @@ export async function* translate(
         yield {
           type: 'tool-call-delta',
           index: block.index,
-          id: CallId(block.callId ?? ''),
+          id: ToolCallId(block.callId ?? ''),
           ...(block.name !== undefined ? { name: block.name } : {}),
           argumentsDelta: fragment,
         };
@@ -181,7 +181,7 @@ export async function* translate(
         index: block.index,
         block: {
           type: 'tool-call',
-          id: CallId(id),
+          id: ToolCallId(id),
           name,
           arguments: block.text,
         },

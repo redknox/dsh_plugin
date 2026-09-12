@@ -6,7 +6,7 @@
  */
 import { Context, type Plugin } from '@deepseek-ai/cordis';
 import LlmRuntime, {
-  CallId,
+  ToolCallId,
   createAssistantMessage,
   createToolResultMessage,
   createUserMessage,
@@ -216,7 +216,7 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
       .filter((c): c is Extract<StreamChunk, { type: 'block-end' }> => c.type === 'block-end')
       .map((c) => c.block);
     expect(toolEnds).toEqual([
-      { type: 'tool-call', id: CallId('call_7'), name: 'get_time', arguments: '{"tz":"Asia/Shanghai"}' },
+      { type: 'tool-call', id: ToolCallId('call_7'), name: 'get_time', arguments: '{"tz":"Asia/Shanghai"}' },
     ]);
     expect(firstChunks.at(-1)).toEqual({ type: 'finish', reason: { kind: 'tool-calls' } });
 
@@ -237,11 +237,11 @@ describe('llm-llamacpp end-to-end through ctx.llm', () => {
     const history = [
       createUserMessage({ content: [{ type: 'text', text: 'What time is it in Asia/Shanghai?' }], source: { kind: 'user' } }),
       createAssistantMessage({
-        content: [{ type: 'tool-call', id: CallId('call_7'), name: 'get_time', arguments: '{"tz":"Asia/Shanghai"}' }],
+        content: [{ type: 'tool-call', id: ToolCallId('call_7'), name: 'get_time', arguments: '{"tz":"Asia/Shanghai"}' }],
         source: { provider: PROVIDER, model: 'qwen3' },
       }),
       createToolResultMessage({
-        callId: CallId('call_7'),
+        callId: ToolCallId('call_7'),
         content: [{ type: 'text', text: '14:30' }],
         isError: false,
       }),

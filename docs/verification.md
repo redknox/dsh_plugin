@@ -5,11 +5,22 @@ instance and the real llama.cpp server used during development
 (`10.60.84.212:8040`, model `/models/Qwen3.8-27B-Q8_0.gguf`, API key from the
 `LLAMA_API_TOKEN` environment variable).
 
+> **Web authentication (Harness >= 0.1.5).** The web API authenticates the
+> browser session: `dsh web` prints a URL carrying a launch token
+> (`http://127.0.0.1:3080/?token=…`). Opening that URL mints a signed session
+> cookie; bare `curl` calls to `/api/*` then answer `401 unauthorized`. For
+> scripted checks, either reuse the browser cookie (copy it from devtools), or
+> run `examples/settings-poc.mjs` with `DSH_WEB_TOKEN=<launch-token>`, which
+> performs the token exchange itself. The in-process examples
+> (`diagnostics.mjs`, `tool-call.mjs`) mount the plugin directly and need no
+> web auth.
+
 ## 1. Provider and model registration (API)
 
 ```bash
 # 1) The provider route is registered and active
 curl -s -X POST http://127.0.0.1:3080/api/llm.providers -H 'Content-Type: application/json' \
+  -H 'Cookie: <session cookie from the browser>' \
   -d '{"type":"client-request","rpcId":"x","method":"llm.providers","payload":{}}'
 # expect: llamacpp-local  active: true, displayName "llama.cpp (Local Qwen3.8)"
 

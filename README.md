@@ -35,9 +35,12 @@ DeepSeek Harness as a Cordis plugin and registers itself through the public
 
 ## Requirements
 
-- DeepSeek Harness with the web profile (`dsh web`); the host provides
-  `@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-settings`,
-  and `@deepseek-ai/dsh-credentials` as peer dependencies.
+- **DeepSeek Harness `0.1.5-rc.2` or newer** with the web profile
+  (`dsh web`); the host provides `@deepseek-ai/cordis` (>= 4.0.2),
+  `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-settings`, and
+  `@deepseek-ai/dsh-credentials` as peer dependencies. (Older Harness
+  releases — e.g. `0.1.0-rc.7` — are not supported: the settings section,
+  tool-call id brand, and value helpers changed in 0.1.5.)
 - A llama.cpp server with an OpenAI-compatible endpoint
   (e.g. `llama-server -m path/to/qwen3.gguf --port 8080` — the Qwen family is
   the validated one; other families are not yet claimed as verified),

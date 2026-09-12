@@ -316,7 +316,7 @@ describe('discoverDraft (issue #13 settings-surface interrogation)', () => {
       createClient: vi.fn(),
     });
     const controller = new AbortController();
-    const pending = adapter.discoverDraft({ baseURL: 'http://draft', signal: controller.signal });
+    const pending = adapter.discoverDraft({ baseURL: 'http://draft' }, controller.signal);
     setTimeout(() => controller.abort(), 10);
     const error = await pending.then(() => undefined, (e: unknown) => e);
     expect((error as LlmError).code).toBe('ABORTED');

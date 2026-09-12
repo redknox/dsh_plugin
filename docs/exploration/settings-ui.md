@@ -106,7 +106,7 @@ instance and requires **zero front-end code**:
 
 ## 4. Proof of concept shipped with this issue
 
-1. `src/adapter.ts` — `LlamacppAdapter.discoverDraft(request)`: answers one
+1. `src/adapter.ts` — `LlamacppAdapter.discoverDraft(request, signal)`: answers one
    `LlmModelDiscoveryRequest` (draft baseURL probe with one-shot credential,
    or provider-named knowledge answer), honoring cancellation and degrading
    probe failures to `[]`.

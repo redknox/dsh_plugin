@@ -5,7 +5,7 @@
  * malformed argument JSON.
  */
 import { describe, expect, it } from 'vitest';
-import { CallId, type StreamChunk, type ToolCallBlock } from '@deepseek-ai/dsh-llm';
+import { ToolCallId, type StreamChunk, type ToolCallBlock } from '@deepseek-ai/dsh-llm';
 import {
   baseOptions,
   chunk,
@@ -86,14 +86,14 @@ describe('streamed tool-call translation', () => {
     // yet; its delta (empty argumentsDelta) must still be emitted so id/name
     // reach the consumer, exactly as the provider sent them.
     expect(deltas.map((d) => d.argumentsDelta)).toEqual(['', '{"tz":', '"UTC"}']);
-    expect(deltas.map((d) => d.id)).toEqual([CallId('call_'), CallId('call_7'), CallId('call_7')]);
+    expect(deltas.map((d) => d.id)).toEqual([ToolCallId('call_'), ToolCallId('call_7'), ToolCallId('call_7')]);
     expect(deltas[0]?.name).toBe('get_');
 
     const ends = chunks.filter((c) => c.type === 'block-end');
     const toolEnd = ends[0]?.block as ToolCallBlock;
     expect(toolEnd).toEqual({
       type: 'tool-call',
-      id: CallId('call_7'),
+      id: ToolCallId('call_7'),
       name: 'get_time',
       arguments: '{"tz":"UTC"}',
     });
@@ -118,8 +118,8 @@ describe('streamed tool-call translation', () => {
       .filter((c): c is Extract<typeof c, { type: 'block-end' }> => c.type === 'block-end')
       .map((c) => c.block as ToolCallBlock);
     expect(toolEnds).toEqual([
-      { type: 'tool-call', id: CallId('call_a'), name: 'get_time', arguments: '{}' },
-      { type: 'tool-call', id: CallId('call_b'), name: 'echo', arguments: '{"text":"hi"}' },
+      { type: 'tool-call', id: ToolCallId('call_a'), name: 'get_time', arguments: '{}' },
+      { type: 'tool-call', id: ToolCallId('call_b'), name: 'echo', arguments: '{"text":"hi"}' },
     ]);
   });
 
@@ -172,8 +172,8 @@ describe('streamed tool-call translation', () => {
     const { chunks, error } = await collect(adapter.stream(baseOptions));
     expect(error).toBeUndefined();
     const deltas = chunks.filter((c) => c.type === 'tool-call-delta');
-    expect(deltas[0]?.id).toBe(CallId(''));
-    expect(deltas[1]?.id).toBe(CallId('call_late'));
+    expect(deltas[0]?.id).toBe(ToolCallId(''));
+    expect(deltas[1]?.id).toBe(ToolCallId('call_late'));
   });
 
   it('fails with a clear error on malformed or incomplete argument JSON', async () => {
@@ -211,14 +211,14 @@ describe('tool round-trip serialization', () => {
         {
           id: 'asst' as never,
           role: 'assistant',
-          content: [{ type: 'tool-call', id: CallId('call_1'), name: 'get_time', arguments: '{}' }],
+          content: [{ type: 'tool-call', id: ToolCallId('call_1'), name: 'get_time', arguments: '{}' }],
           source: { kind: 'model', provider: 'llamacpp-local', model: 'qwen3' },
         },
         {
           id: 'toolres' as never,
           role: 'user',
-          content: [{ type: 'tool-result', toolCallId: CallId('call_1'), content: [{ type: 'text', text: '14:30 UTC' }] }],
-          source: { kind: 'tool', callId: CallId('call_1') },
+          content: [{ type: 'tool-result', toolCallId: ToolCallId('call_1'), content: [{ type: 'text', text: '14:30 UTC' }] }],
+          source: { kind: 'tool', callId: ToolCallId('call_1') },
         },
         msg('user', 'Thanks'),
       ],
